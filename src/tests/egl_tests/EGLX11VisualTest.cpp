@@ -6,11 +6,8 @@
 
 // EGLX11VisualTest.cpp: tests for EGL_ANGLE_x11_visual extension
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include <gtest/gtest.h>
+#include "common/unsafe_buffers.h"
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -18,8 +15,8 @@
 #include <X11/Xresource.h>
 #include <X11/Xutil.h>
 
+#include "common/span.h"
 #include "test_utils/ANGLETest.h"
-#include "util/OSWindow.h"
 #include "util/linux/x11/X11Window.h"
 
 using namespace angle;
@@ -41,6 +38,8 @@ class EGLX11VisualHintTest : public ANGLETest<>
 
         attribs.push_back(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
         attribs.push_back(GetParam().getRenderer());
+        attribs.push_back(EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE);
+        attribs.push_back(EGL_PLATFORM_X11_EXT);
         attribs.push_back(EGL_X11_VISUAL_ID_ANGLE);
         attribs.push_back(visualId);
         attribs.push_back(EGL_NONE);
@@ -58,11 +57,14 @@ class EGLX11VisualHintTest : public ANGLETest<>
             XGetVisualInfo(mDisplay, VisualScreenMask, &visualTemplate, &numVisuals);
         EXPECT_TRUE(numVisuals >= 2);
 
-        for (int i = 0; i < numVisuals; ++i)
+        // SAFETY: XGetVisualInfo returns an array of numVisuals entries.
+        Span<const XVisualInfo> visualList =
+            ANGLE_UNSAFE_BUFFERS(Span(visuals, static_cast<size_t>(numVisuals)));
+        for (const XVisualInfo &visual : visualList)
         {
-            if (visuals[i].visualid != visualId)
+            if (visual.visualid != visualId)
             {
-                int result = visuals[i].visualid;
+                int result = visual.visualid;
                 XFree(visuals);
                 return result;
             }
@@ -79,6 +81,10 @@ class EGLX11VisualHintTest : public ANGLETest<>
 // Test that display creation fails if the visual ID passed in invalid.
 TEST_P(EGLX11VisualHintTest, InvalidVisualID)
 {
+    OSWindow *osWindow = CreateX11Window();
+    osWindow->initialize("EGLX11VisualHintTest", 500, 500);
+    setWindowVisible(osWindow, true);
+
     static const int gInvalidVisualId = -1;
     auto attributes                   = getDisplayAttributes(gInvalidVisualId);
 
@@ -88,6 +94,8 @@ TEST_P(EGLX11VisualHintTest, InvalidVisualID)
 
     ASSERT_TRUE(EGL_FALSE == eglInitialize(display, nullptr, nullptr));
     ASSERT_EGL_ERROR(EGL_NOT_INITIALIZED);
+
+    OSWindow::Delete(&osWindow);
 }
 
 // Test that context creation with a visual ID succeeds, that the context exposes
@@ -96,7 +104,7 @@ TEST_P(EGLX11VisualHintTest, ValidVisualIDAndClear)
 {
     // We'll test the extension with one visual ID but we don't care which one. This means we
     // can use OSWindow to create a window and just grab its visual.
-    OSWindow *osWindow = OSWindow::New();
+    OSWindow *osWindow = CreateX11Window();
     osWindow->initialize("EGLX11VisualHintTest", 500, 500);
     setWindowVisible(osWindow, true);
 
@@ -170,7 +178,7 @@ TEST_P(EGLX11VisualHintTest, InvalidWindowVisualID)
     // creation will succeed.
     int visualId;
     {
-        OSWindow *osWindow = OSWindow::New();
+        OSWindow *osWindow = CreateX11Window();
         osWindow->initialize("EGLX11VisualHintTest", 500, 500);
         setWindowVisible(osWindow, true);
 
@@ -220,7 +228,14 @@ TEST_P(EGLX11VisualHintTest, InvalidWindowVisualID)
     EXPECT_EQ(nchildren, 1U);
     XFree(children);
 
+    // Teardown: destroy the surface before its native window, then terminate.
+    eglDestroySurface(display, window);
+    ASSERT_EGL_SUCCESS();
+
     OSWindow::Delete(&osWindow);
+
+    eglTerminate(display);
+    ASSERT_EGL_SUCCESS();
 }
 
 ANGLE_INSTANTIATE_TEST(EGLX11VisualHintTest, WithNoFixture(ES2_OPENGL()));

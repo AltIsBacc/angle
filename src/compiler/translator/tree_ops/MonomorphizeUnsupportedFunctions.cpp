@@ -54,6 +54,55 @@ void InitializeFunctionMap(TIntermBlock *root, FunctionMap *functionMapOut)
     }
 }
 
+void RemoveUnreferencedFunctions(TIntermBlock *root, const FunctionMap &functionMap)
+{
+    TIntermSequence &sequence = *root->getSequence();
+    TIntermSequence pruned;
+
+    for (TIntermNode *node : sequence)
+    {
+        TIntermFunctionDefinition *asFuncDef = node->getAsFunctionDefinition();
+        if (asFuncDef != nullptr)
+        {
+            const TFunction *function = asFuncDef->getFunction();
+            ASSERT(function && functionMap.find(function) != functionMap.end());
+            if (!function->isMain() && !functionMap.at(function).isOriginalUsed)
+            {
+                // This function was never called, remove it
+                continue;
+            }
+        }
+
+        pruned.push_back(node);
+    }
+
+    root->replaceAllChildren(std::move(pruned));
+}
+
+// A copied function body isn't traversed in the current pass, so mark its callees as used here to
+// keep them from being removed while the copy still calls them.
+class MarkCalledFunctionsUsedTraverser final : public TIntermTraverser
+{
+  public:
+    explicit MarkCalledFunctionsUsedTraverser(FunctionMap *functionMap)
+        : TIntermTraverser(true, false, false), mFunctionMap(functionMap)
+    {}
+
+    bool visitAggregate(Visit visit, TIntermAggregate *node) override
+    {
+        if (node->getOp() == EOpCallFunctionInAST)
+        {
+            auto iter = mFunctionMap->find(node->getFunction());
+            ASSERT(iter != mFunctionMap->end());
+            iter->second.isOriginalUsed = true;
+        }
+        return true;
+    }
+
+  private:
+    FunctionMap *mFunctionMap;
+};
+
 const TVariable *GetBaseUniform(TIntermTyped *node, bool *isSamplerInStructOut)
 {
     *isSamplerInStructOut = false;
@@ -75,7 +124,7 @@ const TVariable *GetBaseUniform(TIntermTyped *node, bool *isSamplerInStructOut)
             *isSamplerInStructOut = true;
         }
 
-        node = asBinary->getLeft();
+        node = op == EOpComma ? asBinary->getRight() : asBinary->getLeft();
     }
 
     // Only interested in uniform opaque types.  If a function call within another function uses
@@ -99,6 +148,13 @@ TIntermTyped *ExtractSideEffects(TSymbolTable *symbolTable,
                                  TIntermTyped *node,
                                  TIntermSequence *replacementIndices)
 {
+    // If this is a comma expression, throw away the left hand side.  THIS IS INCORRECT, but it's
+    // overly complicated to try and support it.  The IR already handles this correctly.
+    while (node->getAsBinaryNode() != nullptr && node->getAsBinaryNode()->getOp() == EOpComma)
+    {
+        node = node->getAsBinaryNode()->getRight();
+    }
+
     TIntermTyped *withoutSideEffects = node->deepCopy();
 
     for (TIntermBinary *asBinary = withoutSideEffects->getAsBinaryNode(); asBinary;
@@ -192,9 +248,11 @@ const TFunction *MonomorphizeFunction(TSymbolTable *symbolTable,
         if (nextReplacedArg >= replacedArguments->size() ||
             paramIndex != (*replacedArguments)[nextReplacedArg].argumentIndex)
         {
-            TVariable *substituteArgument =
-                new TVariable(symbolTable, originalParam->name(), &originalParam->getType(),
-                              originalParam->symbolType());
+            TVariable *substituteArgument = new TVariable(
+                symbolTable,
+                originalParam->symbolType() == SymbolType::Empty ? kEmptyImmutableString
+                                                                 : originalParam->name(),
+                &originalParam->getType(), originalParam->symbolType());
             // Not replaced, add an identical parameter.
             substituteFunction->addParameter(substituteArgument);
             (*argumentMapOut)[originalParam->uniqueId()] = new TIntermSymbol(substituteArgument);
@@ -417,6 +475,9 @@ class MonomorphizeTraverser final : public TIntermTraverser
         bool valid = ReplaceVariables(mCompiler, substituteBlock, argumentMap);
         ASSERT(valid);
 
+        MarkCalledFunctionsUsedTraverser markUsed(mFunctionMap);
+        substituteBlock->traverse(&markUsed);
+
         return new TIntermFunctionDefinition(substitutePrototype, substituteBlock);
     }
 
@@ -451,9 +512,8 @@ class UpdateFunctionsDefinitionsTraverser final : public TIntermTraverser
         const FunctionData &data = mFunctionMap.at(function);
 
         // If nothing to do, leave it be.
-        if (data.monomorphizedDefinitions.empty())
+        if (data.monomorphizedDefinitions.empty() && (data.isOriginalUsed || function->isMain()))
         {
-            ASSERT(data.isOriginalUsed || function->isMain());
             return;
         }
 
@@ -482,9 +542,8 @@ class UpdateFunctionsDefinitionsTraverser final : public TIntermTraverser
         const FunctionData &data = mFunctionMap.at(function);
 
         // If nothing to do, leave it be.
-        if (data.monomorphizedDefinitions.empty())
+        if (data.monomorphizedDefinitions.empty() && (data.isOriginalUsed || function->isMain()))
         {
-            ASSERT(data.isOriginalUsed || function->isMain());
             return false;
         }
 
@@ -509,34 +568,6 @@ class UpdateFunctionsDefinitionsTraverser final : public TIntermTraverser
     const FunctionMap &mFunctionMap;
 };
 
-void SortDeclarations(TIntermBlock *root)
-{
-    TIntermSequence *original = root->getSequence();
-
-    TIntermSequence replacement;
-    TIntermSequence functionDefs;
-
-    // Accumulate non-function-definition declarations in |replacement| and function definitions in
-    // |functionDefs|.
-    for (TIntermNode *node : *original)
-    {
-        if (node->getAsFunctionDefinition() || node->getAsFunctionPrototypeNode())
-        {
-            functionDefs.push_back(node);
-        }
-        else
-        {
-            replacement.push_back(node);
-        }
-    }
-
-    // Append function definitions to |replacement|.
-    replacement.insert(replacement.end(), functionDefs.begin(), functionDefs.end());
-
-    // Replace root's sequence with |replacement|.
-    root->replaceAllChildren(std::move(replacement));
-}
-
 bool MonomorphizeUnsupportedFunctionsImpl(TCompiler *compiler,
                                           TIntermBlock *root,
                                           TSymbolTable *symbolTable,
@@ -545,7 +576,7 @@ bool MonomorphizeUnsupportedFunctionsImpl(TCompiler *compiler,
     // First, sort out the declarations such that all non-function declarations are placed before
     // function definitions.  This way when the function is replaced with one that references said
     // declarations (i.e. uniforms), the uniform declaration is already present above it.
-    SortDeclarations(root);
+    MoveDeclarationsBeforeFunctions(root);
 
     while (true)
     {
@@ -558,6 +589,14 @@ bool MonomorphizeUnsupportedFunctionsImpl(TCompiler *compiler,
 
         if (!monomorphizer.getAnyMonomorphized())
         {
+            // This transformation does not correctly handle comma in function arguments, so if f
+            // needs monomorphization in f((g(x), y), the call to g is accidentally dropped.  If g
+            // needed monomorphization in a second pass, it's now lost but the function itself is
+            // still left in the AST, causing trouble in future passes.  This is not a problem in
+            // the IR; for now the AST pass is made to just remove g to prevent an unexpected AST
+            // even though the translation is incorrect.
+            RemoveUnreferencedFunctions(root, functionMap);
+
             break;
         }
 

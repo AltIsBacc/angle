@@ -68,6 +68,11 @@
             <enum name="GL_NAND_ANGLE"/>
             <enum name="GL_SET_ANGLE"/>
         </group>
+        <group name="MemoryTrimLevel">
+            <enum name="GL_MEMORY_TRIM_LOW_ANGLE"/>
+            <enum name="GL_MEMORY_TRIM_MEDIUM_ANGLE"/>
+            <enum name="GL_MEMORY_TRIM_HIGH_ANGLE"/>
+        </group>
     </groups>
 
     <!-- SECTION: GL command definitions. -->
@@ -77,10 +82,6 @@
             <param><ptype>GLuint</ptype> <name>program</name></param>
             <param><ptype>GLint</ptype> <name>location</name></param>
             <param>const <ptype>GLchar</ptype> *<name>name</name></param>
-        </command>
-        <command>
-            <proto>void <name>glCoverageModulationCHROMIUM</name></proto>
-            <param><ptype>GLenum</ptype> <name>components</name></param>
         </command>
         <command>
             <proto>void <name>glMatrixLoadfCHROMIUM</name></proto>
@@ -128,10 +129,6 @@
         </command>
         <command>
             <proto>void <name>glRequestExtensionANGLE</name></proto>
-            <param>const <ptype>GLchar</ptype> *<name>name</name></param>
-        </command>
-        <command>
-            <proto>void <name>glDisableExtensionANGLE</name></proto>
             <param>const <ptype>GLchar</ptype> *<name>name</name></param>
         </command>
         <command>
@@ -336,59 +333,6 @@
             <param>const void *<name>pixels</name></param>
         </command>
         <command>
-            <proto>void <name>glCompressedTexImage2DRobustANGLE</name></proto>
-            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
-            <param><ptype>GLint</ptype> <name>level</name></param>
-            <param group="InternalFormat"><ptype>GLenum</ptype> <name>internalformat</name></param>
-            <param><ptype>GLsizei</ptype> <name>width</name></param>
-            <param><ptype>GLsizei</ptype> <name>height</name></param>
-            <param><ptype>GLint</ptype> <name>border</name></param>
-            <param><ptype>GLsizei</ptype> <name>imageSize</name></param>
-            <param><ptype>GLsizei</ptype> <name>bufSize</name></param>
-            <param>const void *<name>data</name></param>
-        </command>
-        <command>
-            <proto>void <name>glCompressedTexSubImage2DRobustANGLE</name></proto>
-            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
-            <param><ptype>GLint</ptype> <name>level</name></param>
-            <param><ptype>GLsizei</ptype> <name>xoffset</name></param>
-            <param><ptype>GLsizei</ptype> <name>yoffset</name></param>
-            <param><ptype>GLsizei</ptype> <name>width</name></param>
-            <param><ptype>GLsizei</ptype> <name>height</name></param>
-            <param group="InternalFormat"><ptype>GLenum</ptype> <name>format</name></param>
-            <param><ptype>GLsizei</ptype> <name>imageSize</name></param>
-            <param><ptype>GLsizei</ptype> <name>bufSize</name></param>
-            <param>const void *<name>data</name></param>
-        </command>
-        <command>
-            <proto>void <name>glCompressedTexImage3DRobustANGLE</name></proto>
-            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
-            <param><ptype>GLint</ptype> <name>level</name></param>
-            <param group="InternalFormat"><ptype>GLenum</ptype> <name>internalformat</name></param>
-            <param><ptype>GLsizei</ptype> <name>width</name></param>
-            <param><ptype>GLsizei</ptype> <name>height</name></param>
-            <param><ptype>GLsizei</ptype> <name>depth</name></param>
-            <param><ptype>GLint</ptype> <name>border</name></param>
-            <param><ptype>GLsizei</ptype> <name>imageSize</name></param>
-            <param><ptype>GLsizei</ptype> <name>bufSize</name></param>
-            <param>const void *<name>data</name></param>
-        </command>
-        <command>
-            <proto>void <name>glCompressedTexSubImage3DRobustANGLE</name></proto>
-            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
-            <param><ptype>GLint</ptype> <name>level</name></param>
-            <param><ptype>GLint</ptype> <name>xoffset</name></param>
-            <param><ptype>GLint</ptype> <name>yoffset</name></param>
-            <param><ptype>GLint</ptype> <name>zoffset</name></param>
-            <param><ptype>GLsizei</ptype> <name>width</name></param>
-            <param><ptype>GLsizei</ptype> <name>height</name></param>
-            <param><ptype>GLsizei</ptype> <name>depth</name></param>
-            <param group="InternalFormat"><ptype>GLenum</ptype> <name>format</name></param>
-            <param><ptype>GLsizei</ptype> <name>imageSize</name></param>
-            <param><ptype>GLsizei</ptype> <name>bufSize</name></param>
-            <param>const void *<name>data</name></param>
-        </command>
-        <command>
             <proto>void <name>glGetQueryivRobustANGLE</name></proto>
             <param group="QueryTarget"><ptype>GLenum</ptype> <name>target</name></param>
             <param group="QueryParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
@@ -526,17 +470,17 @@
         <command>
             <proto>void <name>glGetTexLevelParameterivRobustANGLE</name></proto>
             <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
-            <param><ptype>GLint</ptype> <name>level</name></param>
-            <param><ptype>GLenum</ptype> <name>pname</name></param>
+            <param group="CheckedInt32"><ptype>GLint</ptype> <name>level</name></param>
+            <param group="TextureImageParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
             <param><ptype>GLsizei</ptype> <name>paramCount</name></param>
             <param><ptype>GLsizei</ptype> *<name>length</name></param>
             <param><ptype>GLint</ptype> *<name>params</name></param>
         </command>
         <command>
             <proto>void <name>glGetTexLevelParameterfvRobustANGLE</name></proto>
-            <param><ptype>GLenum</ptype> <name>target</name></param>
-            <param><ptype>GLint</ptype> <name>level</name></param>
-            <param><ptype>GLenum</ptype> <name>pname</name></param>
+            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
+            <param group="CheckedInt32"><ptype>GLint</ptype> <name>level</name></param>
+            <param group="TextureImageParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
             <param><ptype>GLsizei</ptype> <name>paramCount</name></param>
             <param><ptype>GLsizei</ptype> *<name>length</name></param>
             <param><ptype>GLfloat</ptype> *<name>params</name></param>
@@ -580,6 +524,14 @@
             <param><ptype>GLsizei</ptype> <name>paramCount</name></param>
             <param><ptype>GLsizei</ptype> *<name>length</name></param>
             <param><ptype>GLint</ptype> *<name>params</name></param>
+        </command>
+        <command>
+            <proto>void <name>glGetFramebufferPixelLocalStorageParameteruivRobustANGLE</name></proto>
+            <param><ptype>GLint</ptype> <name>plane</name></param>
+            <param><ptype>GLenum</ptype> <name>pname</name></param>
+            <param><ptype>GLsizei</ptype> <name>paramCount</name></param>
+            <param><ptype>GLsizei</ptype> *<name>length</name></param>
+            <param><ptype>GLuint</ptype> *<name>params</name></param>
         </command>
         <command>
             <proto>void <name>glCopyTexture3DANGLE</name></proto>
@@ -628,15 +580,15 @@
        <proto>void <name>glGetTexLevelParameterivANGLE</name></proto>
             <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
             <param group="CheckedInt32"><ptype>GLint</ptype> <name>level</name></param>
-            <param group="GetTextureParameter"><ptype>GLenum</ptype> <name>pname</name></param>
-            <param len="COMPSIZE(pname)"><ptype>GLint</ptype> *<name>params</name></param>
+            <param group="TextureImageParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
+            <param><ptype>GLint</ptype> *<name>params</name></param>
             <alias name="glGetTexLevelParameteriv"/>
         </command>
         <command>
             <proto>void <name>glGetTexLevelParameterfvANGLE</name></proto>
-            <param><ptype>GLenum</ptype> <name>target</name></param>
-            <param><ptype>GLint</ptype> <name>level</name></param>
-            <param><ptype>GLenum</ptype> <name>pname</name></param>
+            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
+            <param group="CheckedInt32"><ptype>GLint</ptype> <name>level</name></param>
+            <param group="TextureImageParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
             <param><ptype>GLfloat</ptype> *<name>params</name></param>
             <alias name="glGetTexLevelParameterfv"/>
         </command>
@@ -741,21 +693,6 @@
             <proto>void <name>glLoseContextCHROMIUM</name></proto>
             <param group="GraphicsResetStatus"><ptype>GLenum</ptype> <name>current</name></param>
             <param group="GraphicsResetStatus"><ptype>GLenum</ptype> <name>other</name></param>
-        </command>
-        <command>
-            <proto>void <name>glTexImage2DExternalANGLE</name></proto>
-            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
-            <param group="CheckedInt32"><ptype>GLint</ptype> <name>level</name></param>
-            <param group="InternalFormat"><ptype>GLint</ptype> <name>internalformat</name></param>
-            <param><ptype>GLsizei</ptype> <name>width</name></param>
-            <param><ptype>GLsizei</ptype> <name>height</name></param>
-            <param group="CheckedInt32"><ptype>GLint</ptype> <name>border</name></param>
-            <param group="PixelFormat"><ptype>GLenum</ptype> <name>format</name></param>
-            <param group="PixelType"><ptype>GLenum</ptype> <name>type</name></param>
-        </command>
-        <command>
-            <proto>void <name>glInvalidateTextureANGLE</name></proto>
-            <param group="TextureTarget"><ptype>GLenum</ptype> <name>target</name></param>
         </command>
         <command>
             <proto>void <name>glGetTexImageANGLE</name></proto>
@@ -865,6 +802,7 @@
             <proto>void <name>glFramebufferMemorylessPixelLocalStorageANGLE</name></proto>
             <param><ptype>GLint</ptype> <name>plane</name></param>
             <param><ptype>GLenum</ptype> <name>internalformat</name></param>
+            <param><ptype>GLbitfield</ptype> <name>usage</name></param>
         </command>
         <command>
             <proto>void <name>glFramebufferTexturePixelLocalStorageANGLE</name></proto>
@@ -872,6 +810,7 @@
             <param class="texture"><ptype>GLuint</ptype> <name>backingtexture</name></param>
             <param><ptype>GLint</ptype> <name>level</name></param>
             <param><ptype>GLint</ptype> <name>layer</name></param>
+            <param><ptype>GLbitfield</ptype> <name>usage</name></param>
         </command>
         <command>
             <proto>void <name>glFramebufferPixelLocalClearValuefvANGLE</name></proto>
@@ -899,6 +838,9 @@
             <param len="n">const <ptype>GLenum</ptype> *<name>storeops</name></param>
         </command>
         <command>
+            <proto>void <name>glEndPixelLocalStorageImplicitANGLE</name></proto>
+        </command>
+        <command>
             <proto>void <name>glPixelLocalStorageBarrierANGLE</name></proto>
         </command>
         <command>
@@ -910,14 +852,20 @@
         <command>
             <proto>void <name>glGetFramebufferPixelLocalStorageParameterfvANGLE</name></proto>
             <param><ptype>GLint</ptype> <name>plane</name></param>
-            <param group="PLSQueryFloat"><ptype>GLenum</ptype> <name>pname</name></param>
+            <param group="PLSPlaneParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
             <param><ptype>GLfloat</ptype> *<name>params</name></param>
         </command>
         <command>
             <proto>void <name>glGetFramebufferPixelLocalStorageParameterivANGLE</name></proto>
             <param><ptype>GLint</ptype> <name>plane</name></param>
-            <param group="PLSQueryInt"><ptype>GLenum</ptype> <name>pname</name></param>
+            <param group="PLSPlaneParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
             <param><ptype>GLint</ptype> *<name>params</name></param>
+        </command>
+        <command>
+            <proto>void <name>glGetFramebufferPixelLocalStorageParameteruivANGLE</name></proto>
+            <param><ptype>GLint</ptype> <name>plane</name></param>
+            <param group="PLSPlaneParameterName"><ptype>GLenum</ptype> <name>pname</name></param>
+            <param><ptype>GLuint</ptype> *<name>params</name></param>
         </command>
         <command>
             <proto>void <name>glLogicOpANGLE</name></proto>
@@ -936,6 +884,10 @@
             <param len="1">void **<name>params</name></param>
             <alias name="glGetPointerv"/>
         </command>
+        <command>
+            <proto>void <name>glTrimMemoryANGLE</name></proto>
+            <param group="MemoryTrimLevel"><ptype>GLenum</ptype> <name>trimLevel</name></param>
+        </command>
     </commands>
 
     <!-- SECTION: ANGLE extension interface definitions -->
@@ -943,11 +895,6 @@
         <extension name="GL_CHROMIUM_bind_uniform_location" supported='gles2'>
             <require>
                 <command name="glBindUniformLocationCHROMIUM"/>
-            </require>
-        </extension>
-        <extension name="GL_CHROMIUM_framebuffer_mixed_samples" supported='gles2'>
-            <require>
-                <command name="glCoverageModulationCHROMIUM"/>
             </require>
         </extension>
         <extension name="GL_CHROMIUM_copy_texture" supported='gles2'>
@@ -964,7 +911,6 @@
         <extension name="GL_ANGLE_request_extension" supported='gles2'>
             <require>
                 <command name="glRequestExtensionANGLE"/>
-                <command name="glDisableExtensionANGLE"/>
                 <enum name="GL_REQUESTABLE_EXTENSIONS_ANGLE"/>
                 <enum name="GL_NUM_REQUESTABLE_EXTENSIONS_ANGLE"/>
             </require>
@@ -1000,10 +946,6 @@
                 <command name="glTexSubImage2DRobustANGLE"/>
                 <command name="glTexImage3DRobustANGLE"/>
                 <command name="glTexSubImage3DRobustANGLE"/>
-                <command name="glCompressedTexImage2DRobustANGLE"/>
-                <command name="glCompressedTexSubImage2DRobustANGLE"/>
-                <command name="glCompressedTexImage3DRobustANGLE"/>
-                <command name="glCompressedTexSubImage3DRobustANGLE"/>
                 <command name="glGetQueryivRobustANGLE"/>
                 <command name="glGetQueryObjectuivRobustANGLE"/>
                 <command name="glGetBufferPointervRobustANGLE"/>
@@ -1027,6 +969,7 @@
                 <command name="glGetQueryObjectui64vRobustANGLE"/>
                 <command name="glGetFramebufferPixelLocalStorageParameterfvRobustANGLE"/>
                 <command name="glGetFramebufferPixelLocalStorageParameterivRobustANGLE"/>
+                <command name="glGetFramebufferPixelLocalStorageParameteruivRobustANGLE"/>
             </require>
         </extension>
         <extension name="GL_ANGLE_robust_resource_initialization" supported='gles2'>
@@ -1055,8 +998,6 @@
                 <enum name="GL_MAX_DEPTH_TEXTURE_SAMPLES_ANGLE"/>
                 <enum name="GL_MAX_INTEGER_SAMPLES_ANGLE"/>
                 <enum name="GL_TEXTURE_BINDING_2D_MULTISAMPLE_ANGLE"/>
-                <enum name="GL_TEXTURE_SAMPLES_ANGLE"/>
-                <enum name="GL_TEXTURE_FIXED_SAMPLE_LOCATIONS_ANGLE"/>
                 <enum name="GL_SAMPLER_2D_MULTISAMPLE_ANGLE"/>
                 <enum name="GL_INT_SAMPLER_2D_MULTISAMPLE_ANGLE"/>
                 <enum name="GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ANGLE"/>
@@ -1129,12 +1070,6 @@
                 <command name="glLoseContextCHROMIUM"/>
             </require>
         </extension>
-        <extension name="GL_ANGLE_texture_external_update" supported='gl|gles2'>
-            <require>
-                <command name="glTexImage2DExternalANGLE"/>
-                <command name="glInvalidateTextureANGLE"/>
-            </require>
-        </extension>
         <extension name ="GL_ANGLE_get_image" supported='gles2'>
             <require>
                 <command name="glGetTexImageANGLE"/>
@@ -1144,6 +1079,27 @@
         </extension>
         <extension name ="GL_ANGLE_get_tex_level_parameter" supported='gles2'>
             <require>
+                <enum name="GL_TEXTURE_WIDTH_ANGLE"/>
+                <enum name="GL_TEXTURE_HEIGHT_ANGLE"/>
+                <enum name="GL_TEXTURE_DEPTH_ANGLE"/>
+                <enum name="GL_TEXTURE_INTERNAL_FORMAT_ANGLE"/>
+                <enum name="GL_TEXTURE_RED_SIZE_ANGLE"/>
+                <enum name="GL_TEXTURE_GREEN_SIZE_ANGLE"/>
+                <enum name="GL_TEXTURE_BLUE_SIZE_ANGLE"/>
+                <enum name="GL_TEXTURE_ALPHA_SIZE_ANGLE"/>
+                <enum name="GL_TEXTURE_DEPTH_SIZE_ANGLE"/>
+                <enum name="GL_TEXTURE_STENCIL_SIZE_ANGLE"/>
+                <enum name="GL_TEXTURE_SHARED_SIZE_ANGLE"/>
+                <enum name="GL_TEXTURE_RED_TYPE_ANGLE"/>
+                <enum name="GL_TEXTURE_GREEN_TYPE_ANGLE"/>
+                <enum name="GL_TEXTURE_BLUE_TYPE_ANGLE"/>
+                <enum name="GL_TEXTURE_ALPHA_TYPE_ANGLE"/>
+                <enum name="GL_TEXTURE_DEPTH_TYPE_ANGLE"/>
+                <enum name="GL_TEXTURE_COMPRESSED_ANGLE"/>
+                <enum name="GL_TEXTURE_SAMPLES_ANGLE"/>
+                <enum name="GL_TEXTURE_FIXED_SAMPLE_LOCATIONS_ANGLE"/>
+                <enum name="GL_UNSIGNED_NORMALIZED_ANGLE"/>
+                <enum name="GL_SIGNED_NORMALIZED_ANGLE"/>
                 <command name="glGetTexLevelParameterfvANGLE"/>
                 <command name="glGetTexLevelParameterivANGLE"/>
             </require>
@@ -1202,13 +1158,15 @@
                 <enum name="GL_LOAD_OP_CLEAR_ANGLE"/>
                 <enum name="GL_LOAD_OP_LOAD_ANGLE"/>
                 <enum name="GL_STORE_OP_STORE_ANGLE"/>
-                <enum name="GL_PIXEL_LOCAL_FORMAT_ANGLE"/>
+                <enum name="GL_PIXEL_LOCAL_INTERNAL_FORMAT_ANGLE"/>
                 <enum name="GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE"/>
                 <enum name="GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE"/>
                 <enum name="GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE"/>
+                <enum name="GL_PIXEL_LOCAL_USAGE_ANGLE"/>
                 <enum name="GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE"/>
                 <enum name="GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE"/>
                 <enum name="GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE"/>
+                <enum name="GL_PIXEL_LOCAL_USAGE_ALWAYS_NONCOHERENT_BIT_ANGLE"/>
                 <command name="glFramebufferMemorylessPixelLocalStorageANGLE"/>
                 <command name="glFramebufferTexturePixelLocalStorageANGLE"/>
                 <command name="glFramebufferPixelLocalClearValuefvANGLE"/>
@@ -1216,11 +1174,13 @@
                 <command name="glFramebufferPixelLocalClearValueuivANGLE"/>
                 <command name="glBeginPixelLocalStorageANGLE"/>
                 <command name="glEndPixelLocalStorageANGLE"/>
+                <command name="glEndPixelLocalStorageImplicitANGLE"/>
                 <command name="glPixelLocalStorageBarrierANGLE"/>
                 <command name="glFramebufferPixelLocalStorageInterruptANGLE"/>
                 <command name="glFramebufferPixelLocalStorageRestoreANGLE"/>
                 <command name="glGetFramebufferPixelLocalStorageParameterfvANGLE"/>
                 <command name="glGetFramebufferPixelLocalStorageParameterivANGLE"/>
+                <command name="glGetFramebufferPixelLocalStorageParameteruivANGLE"/>
             </require>
         </extension>
         <extension name="GL_ANGLE_logic_op" supported="gles2">
@@ -1253,21 +1213,6 @@
         </extension>
         <!-- NOTE: GL_ANGLE_texture_compression_dxt3 is defined in the upstream Khronos gl.xml and should not be defined here. -->
         <!-- NOTE: GL_ANGLE_texture_compression_dxt5 is defined in the upstream Khronos gl.xml and should not be defined here. -->
-        <extension name="GL_ANGLE_lossy_etc_decode" supported='gles2'>
-            <require>
-                <enum name="GL_ETC1_RGB8_LOSSY_DECODE_ANGLE"/>
-                <enum name="GL_COMPRESSED_R11_LOSSY_DECODE_EAC_ANGLE"/>
-                <enum name="GL_COMPRESSED_SIGNED_R11_LOSSY_DECODE_EAC_ANGLE"/>
-                <enum name="GL_COMPRESSED_RG11_LOSSY_DECODE_EAC_ANGLE"/>
-                <enum name="GL_COMPRESSED_SIGNED_RG11_LOSSY_DECODE_EAC_ANGLE"/>
-                <enum name="GL_COMPRESSED_RGB8_LOSSY_DECODE_ETC2_ANGLE"/>
-                <enum name="GL_COMPRESSED_SRGB8_LOSSY_DECODE_ETC2_ANGLE"/>
-                <enum name="GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_LOSSY_DECODE_ETC2_ANGLE"/>
-                <enum name="GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_LOSSY_DECODE_ETC2_ANGLE"/>
-                <enum name="GL_COMPRESSED_RGBA8_LOSSY_DECODE_ETC2_EAC_ANGLE"/>
-                <enum name="GL_COMPRESSED_SRGB8_ALPHA8_LOSSY_DECODE_ETC2_EAC_ANGLE"/>
-            </require>
-        </extension>
         <extension name="GL_ANGLE_yuv_internal_format" supported='gles2'>
             <require>
                 <enum name="GL_G8_B8R8_2PLANE_420_UNORM_ANGLE"/>
@@ -1326,6 +1271,14 @@
                 <command name="glGetPointervANGLE"/>
             </require>
         </extension>
+        <extension name="GL_ANGLE_trim_memory" supported="gles2">
+            <require>
+                <command name="glTrimMemoryANGLE"/>
+                <enum name="GL_MEMORY_TRIM_LOW_ANGLE"/>
+                <enum name="GL_MEMORY_TRIM_MEDIUM_ANGLE"/>
+                <enum name="GL_MEMORY_TRIM_HIGH_ANGLE"/>
+            </require>
+        </extension>
     </extensions>
 
     <!-- SECTION: GL enumerant (token) definitions. -->
@@ -1371,17 +1324,6 @@
     <enums namespace="GL" vendor="ANGLE">
         <enum value="0x83F0" name="GL_COMPRESSED_RGB_S3TC_DXT1_ANGLE" group="InternalFormat,SizedInternalFormat"/>
         <enum value="0x83F1" name="GL_COMPRESSED_RGBA_S3TC_DXT1_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9690" name="GL_ETC1_RGB8_LOSSY_DECODE_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9691" name="GL_COMPRESSED_R11_LOSSY_DECODE_EAC_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9692" name="GL_COMPRESSED_SIGNED_R11_LOSSY_DECODE_EAC_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9693" name="GL_COMPRESSED_RG11_LOSSY_DECODE_EAC_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9694" name="GL_COMPRESSED_SIGNED_RG11_LOSSY_DECODE_EAC_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9695" name="GL_COMPRESSED_RGB8_LOSSY_DECODE_ETC2_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9696" name="GL_COMPRESSED_SRGB8_LOSSY_DECODE_ETC2_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9697" name="GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_LOSSY_DECODE_ETC2_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9698" name="GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_LOSSY_DECODE_ETC2_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x9699" name="GL_COMPRESSED_RGBA8_LOSSY_DECODE_ETC2_EAC_ANGLE" group="InternalFormat,SizedInternalFormat"/>
-        <enum value="0x969A" name="GL_COMPRESSED_SRGB8_ALPHA8_LOSSY_DECODE_ETC2_EAC_ANGLE" group="InternalFormat,SizedInternalFormat"/>
         <enum value="0x96B1" name="GL_G8_B8R8_2PLANE_420_UNORM_ANGLE"/>
         <enum value="0x96B2" name="GL_G8_B8_R8_3PLANE_420_UNORM_ANGLE"/>
         <enum value="0x96B3" name="GL_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16_ANGLE"/>
@@ -1394,6 +1336,30 @@
     </enums>
 
     <enums>
+        <enum value="0x1000" name="GL_TEXTURE_WIDTH_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x1001" name="GL_TEXTURE_HEIGHT_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8071" name="GL_TEXTURE_DEPTH_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x1003" name="GL_TEXTURE_INTERNAL_FORMAT_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x805C" name="GL_TEXTURE_RED_SIZE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x805D" name="GL_TEXTURE_GREEN_SIZE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x805E" name="GL_TEXTURE_BLUE_SIZE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x805F" name="GL_TEXTURE_ALPHA_SIZE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x884A" name="GL_TEXTURE_DEPTH_SIZE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x88F1" name="GL_TEXTURE_STENCIL_SIZE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8C3F" name="GL_TEXTURE_SHARED_SIZE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8C10" name="GL_TEXTURE_RED_TYPE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8C11" name="GL_TEXTURE_GREEN_TYPE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8C12" name="GL_TEXTURE_BLUE_TYPE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8C13" name="GL_TEXTURE_ALPHA_TYPE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8C16" name="GL_TEXTURE_DEPTH_TYPE_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x86A1" name="GL_TEXTURE_COMPRESSED_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x9106" name="GL_TEXTURE_SAMPLES_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x9107" name="GL_TEXTURE_FIXED_SAMPLE_LOCATIONS_ANGLE" group="TextureImageParameterName"/>
+        <enum value="0x8C17" name="GL_UNSIGNED_NORMALIZED_ANGLE"/>
+        <enum value="0x8F9C" name="GL_SIGNED_NORMALIZED_ANGLE"/>
+    </enums>
+
+    <enums>
         <enum value="0x9100" name="GL_TEXTURE_2D_MULTISAMPLE_ANGLE"/>
         <enum value="0x8E50" name="GL_SAMPLE_POSITION_ANGLE"/>
         <enum value="0x8E51" name="GL_SAMPLE_MASK_ANGLE"/>
@@ -1403,8 +1369,6 @@
         <enum value="0x910F" name="GL_MAX_DEPTH_TEXTURE_SAMPLES_ANGLE"/>
         <enum value="0x9110" name="GL_MAX_INTEGER_SAMPLES_ANGLE"/>
         <enum value="0x9104" name="GL_TEXTURE_BINDING_2D_MULTISAMPLE_ANGLE"/>
-        <enum value="0x9106" name="GL_TEXTURE_SAMPLES_ANGLE"/>
-        <enum value="0x9107" name="GL_TEXTURE_FIXED_SAMPLE_LOCATIONS_ANGLE"/>
         <enum value="0x9108" name="GL_SAMPLER_2D_MULTISAMPLE_ANGLE"/>
         <enum value="0x9109" name="GL_INT_SAMPLER_2D_MULTISAMPLE_ANGLE"/>
         <enum value="0x910A" name="GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ANGLE"/>
@@ -1435,7 +1399,7 @@
         <enum value="0x1500" name="GL_CLEAR_ANGLE"/>
     </enums>
 
-    <enums namespace="GL" start="0x96E0" end="0x96ED" vendor="ANGLE">
+    <enums namespace="GL" start="0x96E0" end="0x96EE" vendor="ANGLE">
         <enum value="0x96E0" name="GL_MAX_PIXEL_LOCAL_STORAGE_PLANES_ANGLE"/>
         <enum value="0x96E1" name="GL_MAX_COMBINED_DRAW_BUFFERS_AND_PIXEL_LOCAL_STORAGE_PLANES_ANGLE"/>
         <enum value="0x96E2" name="GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE"/>
@@ -1443,13 +1407,15 @@
         <enum value="0x96E4" name="GL_LOAD_OP_CLEAR_ANGLE"/>
         <enum value="0x96E5" name="GL_LOAD_OP_LOAD_ANGLE"/>
         <enum value="0x96E6" name="GL_STORE_OP_STORE_ANGLE"/>
-        <enum value="0x96E7" name="GL_PIXEL_LOCAL_FORMAT_ANGLE" group="PLSQueryInt"/>
-        <enum value="0x96E8" name="GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE" group="PLSQueryInt"/>
-        <enum value="0x96E9" name="GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE" group="PLSQueryInt"/>
-        <enum value="0x96EA" name="GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE" group="PLSQueryInt"/>
-        <enum value="0x96EB" name="GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE" group="PLSQueryFloat"/>
-        <enum value="0x96EC" name="GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE" group="PLSQueryInt"/>
-        <enum value="0x96ED" name="GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE" group="PLSQueryInt"/>
+        <enum value="0x96E7" name="GL_PIXEL_LOCAL_INTERNAL_FORMAT_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x96E8" name="GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x96E9" name="GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x96EA" name="GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x96EB" name="GL_PIXEL_LOCAL_USAGE_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x96EC" name="GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x96ED" name="GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x96EE" name="GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE" group="PLSPlaneParameterName"/>
+        <enum value="0x1" name="GL_PIXEL_LOCAL_USAGE_ALWAYS_NONCOHERENT_BIT_ANGLE"/>
     </enums>
 
     <enums namespace="GL" group="CreateFlagMask" type="bitmask" vendor="ANGLE">
@@ -1508,5 +1474,11 @@
         <enum value="0x96BF" name="GL_BLOB_CACHE_GET_FUNCTION_ANGLE"/>
         <enum value="0x96EF" name="GL_BLOB_CACHE_SET_FUNCTION_ANGLE"/>
         <enum value="0x972D" name="GL_BLOB_CACHE_USER_PARAM_ANGLE"/>
+    </enums>
+
+    <enums namespace="GL" vendor="ANGLE">
+        <enum value="0x0960" name="GL_MEMORY_TRIM_LOW_ANGLE" group="MemoryTrimLevel"/>
+        <enum value="0x0961" name="GL_MEMORY_TRIM_MEDIUM_ANGLE" group="MemoryTrimLevel"/>
+        <enum value="0x0962" name="GL_MEMORY_TRIM_HIGH_ANGLE" group="MemoryTrimLevel"/>
     </enums>
 </registry>

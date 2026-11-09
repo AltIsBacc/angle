@@ -4,10 +4,6 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "test_utils/CompilerTest.h"
 
 #include "test_utils/angle_test_configs.h"
@@ -228,7 +224,7 @@ void main() {
     }
     else
     {
-        verifyIsInTranslation(GL_VERTEX_SHADER, "_uout1 = _uMyS(");
+        verifyIsInTranslation(GL_VERTEX_SHADER, "_uout1 = _uMyS_0(");
     }
 }
 
@@ -385,46 +381,175 @@ TEST_P(GLSLOutputGLSLVerifyIRUseTest, Basic)
     }
 }
 
-class GLSLOutputMSLTest_EnsureLoopForwardProgress : public GLSLOutputTest
-{};
+class GLSLOutputTest_EnsureLoopForwardProgress : public GLSLOutputTest
+{
+  protected:
+    // The implementation of EnsureLoopForwardProgress is different for Metal.  It uses a helper
+    // named loopForwardProgress.  Elsewhere, it's implemented with a counter and a break.  The
+    // counter counts up to 2147483647.
+    void verifyNoLoopForwardProgress()
+    {
+        if (IsMetal())
+        {
+            verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress");
+        }
+        else
+        {
+            verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "2147483647");
+        }
+    }
+    void verifyLoopForwardProgress()
+    {
+        if (IsMetal())
+        {
+            verifyIsInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress");
+        }
+        else
+        {
+            verifyIsInTranslation(GL_FRAGMENT_SHADER, "2147483647");
+        }
+    }
+    void verifyLoopForwardProgressCount(uint32_t expect)
+    {
+        if (IsMetal())
+        {
+            // One occurrence for defining |loopForwardProgress()|, and a number of calls in the
+            // loop.
+            verifyCountInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress", expect + 1);
+        }
+        else
+        {
+            verifyCountInTranslation(GL_FRAGMENT_SHADER, "2147483647", expect);
+        }
+    }
+};
 
 // Test that loopForwardProgress() is not inserted when the for loop is obviously not an infinite
 // loop.
-TEST_P(GLSLOutputMSLTest_EnsureLoopForwardProgress, FiniteBasicFor)
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, FiniteBasicFor)
 {
     constexpr char kFS[] = R"(#version 300 es
 void main() {
     for (highp int i = 0; i < 100; ++i) { }
 })";
     compileShader(GL_FRAGMENT_SHADER, kFS);
-    // The AST transformation (EnsureLoopForwardProgress ) expects a |for| loop, but the IR changes
-    // it to |while| before that's run.  So when the IR is used, the test would fail as the
-    // transformaiton is unable to correctly detect finite loops.
-    //
-    // Once the transformation is ported to the IR, the test verification can be enabled.
-    if (!getEGLWindow()->isFeatureEnabled(Feature::UseIr))
+    verifyNoLoopForwardProgress();
+}
+
+// Test that loopForwardProgress() is not inserted when the for loop is obviously not an infinite
+// loop, where the condition involves read-only variables.
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, FiniteForWithReadOnlyComparator)
+{
+    // Uniform comparator is read-only and like a constant.
     {
-        verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress");
+        constexpr char kFS[] = R"(#version 300 es
+uniform highp int c;
+void main() {
+    for (highp int i = 0; i < c; ++i) { }
+})";
+        compileShader(GL_FRAGMENT_SHADER, kFS);
+        verifyNoLoopForwardProgress();
+    }
+
+    // Uniform from a UBO is read-only and like a constant.
+    {
+        constexpr char kFS[] = R"(#version 300 es
+uniform Block {
+    highp int c;
+};
+void main() {
+    for (highp int i = 0; i < c; ++i) { }
+})";
+        compileShader(GL_FRAGMENT_SHADER, kFS);
+        verifyNoLoopForwardProgress();
+    }
+
+    // Uniform from a UBO, even if indexed and nested, is read-only and like a constant.
+    {
+        constexpr char kFS[] = R"(#version 300 es
+struct S {
+    highp int c[4];
+};
+uniform Block {
+    S s[3];
+} u;
+void main() {
+    for (highp int i = 0; i < u.s[1].c[2]; ++i) { }
+})";
+        compileShader(GL_FRAGMENT_SHADER, kFS);
+        // The AST transformation does not detect this as finite loop.
+        if (getEGLWindow()->isFeatureEnabled(Feature::UseIr))
+        {
+            verifyNoLoopForwardProgress();
+        }
+    }
+
+    // Shader input is read-only and like a constant.
+    {
+        constexpr char kFS[] = R"(#version 300 es
+flat in mediump int v;
+void main() {
+    for (highp int i = 0; i < v; ++i) { }
+})";
+        compileShader(GL_FRAGMENT_SHADER, kFS);
+        verifyNoLoopForwardProgress();
     }
 }
 
 // Test that loopForwardProgress() is inserted when the for loop is an infinite loop.
-TEST_P(GLSLOutputMSLTest_EnsureLoopForwardProgress, InfiniteFor)
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, InfiniteFor)
 {
-    constexpr char kFS[] = R"(#version 300 es
+    // Loop counter resets in the loop body
+    {
+        constexpr char kFS[] = R"(#version 300 es
 void main() {
     for (highp int i = 0; i < 100; i++) { i = 0; }
 })";
-    compileShader(GL_FRAGMENT_SHADER, kFS);
-    if (!getEGLWindow()->isFeatureEnabled(Feature::UseIr))
+        compileShader(GL_FRAGMENT_SHADER, kFS);
+        verifyLoopForwardProgressCount(1);
+    }
+
+    // Loop condition is always false
     {
-        // One occurrence for defining |loopForwardProgress()|, and one call in the loop.
-        verifyCountInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress", 1 + 1);
+        constexpr char kFS[] = R"(precision mediump float;
+void main() {
+    for (int i = 0; i < i + 1; ++i) { }
+    gl_FragColor = vec4(1);
+})";
+        compileShader(GL_FRAGMENT_SHADER, kFS);
+        verifyLoopForwardProgressCount(1);
+    }
+
+    // Loop variable is modified inside the index of a read-only variable.
+    {
+        constexpr char kFS[] = R"(#version 300 es
+precision mediump float;
+
+uniform Block {
+    uint u[3];
+};
+
+out vec4 color;
+
+void main(void) {
+    color = vec4(1, 0, 0, 1);
+    for (uint i = 1u; i < u[--i]; ++i)
+    {
+        color.y += 0.1;
+    }
+})";
+        compileShader(GL_FRAGMENT_SHADER, kFS);
+        // The AST transformation looks at the qualifier for u[--i], sees it's a uniform, and
+        // doesn't realize it modifies |i|.
+        if (getEGLWindow()->isFeatureEnabled(Feature::UseIr))
+        {
+            verifyLoopForwardProgressCount(1);
+        }
     }
 }
 
 // Test that loopForwardProgress() is inserted when nested for loops are infinite loops.
-TEST_P(GLSLOutputMSLTest_EnsureLoopForwardProgress, InfiniteNestedFor)
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, InfiniteNestedFor)
 {
     constexpr char kFS[] = R"(#version 300 es
 void main() {
@@ -438,16 +563,35 @@ void main() {
     }
 })";
     compileShader(GL_FRAGMENT_SHADER, kFS);
-    if (!getEGLWindow()->isFeatureEnabled(Feature::UseIr))
+    verifyLoopForwardProgressCount(2);
+}
+
+// Test that loopForwardProgress() is inserted when the loop variable is global.
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, InfiniteForWithGlobal)
+{
+    constexpr char kFS[] = R"(#version 300 es
+highp int i;
+void f()
+{
+    i = 0;
+}
+void main() {
+    for (i = 0; i < 100; i++)
     {
-        // One occurrence for defining |loopForwardProgress()|, and one call in each loop.
-        verifyCountInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress", 2 + 1);
+        i = 0;
     }
+    for (i = 0; i < 100; i++)
+    {
+        f();
+    }
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyLoopForwardProgressCount(2);
 }
 
 // Test that loopForwardProgress() is not inserted when the for loop is not an infinite loop,
 // testing various tricky loops.
-TEST_P(GLSLOutputMSLTest_EnsureLoopForwardProgress, FiniteFors)
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, FiniteFors)
 {
     const char kShaderPrefix[] = R"(#version 300 es
 precision highp int;
@@ -457,65 +601,470 @@ void main() {
 
 )";
     const char kShaderSuffix[] = "}\n";
-    const char *kTests[]{"int i = 101; for (; i < 10; i++) { }",
-                         "int i = 101; for (; i < 10; i+=1) { }",
-                         "int i = 101; for (; i < 10; i-=1) { }",
-                         "for (int i = 0; i < 10; i++) { }",
-                         "for (int i = 0; i < a; i++) { }",
-                         "for (int i = 0; i < 100000/2; ++i) { }",
-                         "for (uint i = 0u; i < 10u; i++) { }",
-                         "for (uint i = 0u; i < b; i++) { }",
-                         "for (uint i = 0u; i < 100000u/2u; ++i) { }",
-                         "for (uint i = 0u; i < 4294967295u; ++i) { }",
-                         "for (uint i = 10u; i > 1u+3u ; --i) { }",
-                         "const int z = 7; for (int i = 0; i < z; i++) { }",
-                         "for (int i = 0; i < 10; i++) { for (int j = 0; j < 1000; ++j) { }}"};
+    const char *kTests[]{
+        "int i = 101; for (; i < 10; i++) { }",
+        "int i = 101; for (; i < 10; i+=1) { }",
+        "int i = 101; for (; i < 10; i-=1) { }",
+        "for (int i = 0; i < 10; i++) { }",
+        "for (int i = 0; i < a; i++) { }",
+        "for (int i = 0; i < 100000/2; ++i) { }",
+        "for (uint i = 0u; i < 10u; i++) { }",
+        "for (uint i = 0u; i < b; i++) { }",
+        "for (uint i = 0u; i < 100000u/2u; ++i) { }",
+        "for (uint i = 0u; i < 4294967295u; ++i) { }",
+        "for (uint i = 10u; i > 1u+3u ; --i) { }",
+        "const int z = 7; for (int i = 0; i < z; i++) { }",
+        "for (int i = 0; i < 10; i++) { for (int j = 0; j < 1000; ++j) { }}",
+        // Finite because |int| is implemented with |uint| such that wraparound has
+        // well-defined behavior, and eventually the values wrap around to make the
+        // condition false.
+        "for (int i = 1; i > 0; ++i) { }",
+        "for (int i = 0; i < 10; i -= 1) { }",
+        // Finite because of eventual wrap around to zero.
+        "for (uint i = 1u; i > 0u; ++i) { }",
+    };
 
     for (const char *test : kTests)
     {
         std::string shader = (std::stringstream() << kShaderPrefix << test << kShaderSuffix).str();
         compileShader(GL_FRAGMENT_SHADER, shader.c_str());
-        if (!getEGLWindow()->isFeatureEnabled(Feature::UseIr))
-        {
-            verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress");
-        }
+        verifyNoLoopForwardProgress();
     }
 }
 
 // Test that loopForwardProgress() is inserted when the for loop is an infinite loop,
 // testing various tricky loops.
-TEST_P(GLSLOutputMSLTest_EnsureLoopForwardProgress, InfiniteFors)
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, InfiniteFors)
 {
     const char kShaderPrefix[] = R"(#version 300 es
 precision highp int;
 uniform int a;
 uniform uint b;
+int f() { return 0; }
+int[2] f(out int x) { x = 0; return int[2](0, 0); }
 void main() {
 
 )";
     const char kShaderSuffix[] = "}\n";
-    const char *kTests[]{"for (;;) { }",
-                         "for (bool b = true; b; b = false) { }",
-                         "for (int i = 0; i < 10;) { }",
-                         "int i = 101; for (; i < 10; i+=2) { }",
-                         "int i = 101; for (; i < 10; i-=2) { }",
-                         "int z = 7; for (int i = 0; i < z; i++) { }",
-                         "for (int i = 0; i < 10; i++) { i++; }",
-                         "for (int i = 0; i < 10;) { i++; }",
-                         "for (int i = 0; i < a/2; i++) { }",
-                         "for (int i = 0; float(i) < 10e10; ++i) { }",
-                         "for (int i = 0; i < 10; i++) { for (int j = 0; j < 1000; ++i) { }}",
-                         "for (int i = 0; i != 1; i+=2) { }"};
+    const char *kTests[]{
+        "for (;;) { }",
+        "for (bool b = true; b; b = false) { }",
+        "for (int i = 0; i < 10;) { }",
+        "int j = 0; for (int i = 0; i < 10; j++) { }",
+        "int j = 0; for (int i = 0; i < 10; j += 1) { }",
+        "int i = 101; for (; i < 10; i+=2) { }",
+        "int i = 101; for (; i < 10; i-=2) { }",
+        "int z = 7; for (int i = 0; i < z; i++) { }",
+        "for (int i = 0; i < 10; i++) { i++; }",
+        "for (int i = 0; i < 10;) { i++; }",
+        "for (int i = 0; i < a/2; i++) { }",
+        "for (int i = 0; float(i) < 10e10; ++i) { }",
+        "for (int i = 0; i < 10; i++) { for (int j = 0; j < 1000; ++i) { }}",
+        "for (int i = 0; i != 1; i+=2) { }",
+        "for (int i = 0; i < 10; i++) { int j; for (j = 0, i = 0; j < 10; j++) { } }",
+        "for (int i = 0; i < 10; i++) { for (int j = 0; i = 0, j < 10; j++) { } }",
+        "for (int i = 0; i < 10; i++) { for (int j = 0; j < 10; i = 0, j++) { } }",
+        "for (int i = 0; i < 10; i++) { for (int j = 0; j < 10; i--, j++) { } }",
+        "for (int i = 0; i < 10; f()) { }",
+        "for (int i = 0; i < 10; a == 0 ? i++ : i = 0) { }",
+        "for (int i = 0; i < (i = 0, 1, 100); i++) { }",
+        "for (int i = 0; i < f(i).length(); i++) { }",
+        "for (ivec2 i = ivec2(0); i != ivec2(10, 20); i++) { }",
+        "for (ivec2 i = ivec2(0); i != ivec2(10, 10); i += ivec2(1, 2)) { }",
+        // Infinite loop because the condition is always true
+        "for (int i = 0; i == 0; i += 0) { }",
+        "for (uint i = 0u; i >= 0u; ++i) { }",
+        // Infinite loop because the |b| might be zero
+        "for (uint i = 10u; i >= b; ++i) { }",
+        // Infinite loop because the condition is always true as |i| never changes.
+        "for (uint i = 0u; i == 0u; i += 0u) { }",
+        // Infinite loop because signed integer overflow is undefined behavior
+        "for (int i = 0; i >= 0; ++i) { }",
+        "for (int i = 1; i >= 0; ++i) { }",
+        // Infinite loop because the condition is always true
+        "for (int i = 0; i <= 2147483647; ++i) { }",
+        "for (int i = 0; i >= -2147483648; ++i) { }",
+        "for (uint i = 0u; i <= 4294967295u; ++i) { }",
+    };
 
     for (const char *test : kTests)
     {
         std::string shader = (std::stringstream() << kShaderPrefix << test << kShaderSuffix).str();
         compileShader(GL_FRAGMENT_SHADER, shader.c_str());
-        if (!getEGLWindow()->isFeatureEnabled(Feature::UseIr))
+        verifyLoopForwardProgress();
+    }
+}
+
+// Test that loopForwardProgress() is inserted in while loops, the translator currently doesn't
+// bother trying to figure out if they can be proven finite.
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, While)
+{
+    const char kShaderPrefix[] = R"(#version 300 es
+precision highp int;
+void main() {
+
+)";
+    const char kShaderSuffix[] = "}\n";
+    const char *kTests[]{
+        "while (true) { }",
+        "while (true) { break; }",
+        "uint i = 0u; while (i < 10u) { ++i; }",
+    };
+
+    for (const char *test : kTests)
+    {
+        std::string shader = (std::stringstream() << kShaderPrefix << test << kShaderSuffix).str();
+        compileShader(GL_FRAGMENT_SHADER, shader.c_str());
+        verifyLoopForwardProgress();
+    }
+}
+
+// Test that loopForwardProgress() is inserted in do-while loops, the translator currently doesn't
+// bother trying to figure out if they can be proven finite.
+TEST_P(GLSLOutputTest_EnsureLoopForwardProgress, DoWhile)
+{
+    const char kShaderPrefix[] = R"(#version 300 es
+precision highp int;
+void main() {
+
+)";
+    const char kShaderSuffix[] = "}\n";
+    const char *kTests[]{
+        "do { } while(true);",
+        "do { } while(false);",
+        "do { break; } while(true);",
+    };
+
+    for (const char *test : kTests)
+    {
+        std::string shader = (std::stringstream() << kShaderPrefix << test << kShaderSuffix).str();
+        compileShader(GL_FRAGMENT_SHADER, shader.c_str());
+        verifyLoopForwardProgress();
+    }
+}
+
+// Test that too-complex expressions are broken up in the IR.  With AST, the shader fails
+// compilation instead.
+TEST_P(WebGLGLSLOutputGLSLTest, ComplexExpression)
+{
+    ANGLE_SKIP_TEST_IF(!getEGLWindow()->isFeatureEnabled(Feature::UseIr));
+
+    std::ostringstream fs;
+    fs << R"(precision highp float;
+            uniform vec4 u_color;
+            void main()
+            {
+               gl_FragColor = u_color)";
+    for (uint32_t i = 0; i < 600; ++i)
+    {
+        fs << "+ vec4(" << i << ")";
+    }
+    fs << "; }";
+    compileShader(GL_FRAGMENT_SHADER, fs.str().c_str());
+    // The output contains (with a lot of parenthesization not shown):
+    //
+    //     webgl_FragColor = vec4(0.0, 0.0, 0.0, 0.0)
+    //               temp1 = _uu_color + vec4(0.0, 0.0, 0.0, 0.0)
+    //                                 + vec4(1.0, 1.0, 1.0, 1.0)
+    //                                 + ...
+    //                                 + vec4(127.0, 127.0, 127.0, 127.0);
+    //               temp2 =     temp1 + vec4(128.0, 128.0, 128.0, 128.0)
+    //                                 + ...
+    //                                 + vec4(255.0, 255.0, 255.0, 255.0);
+    //                    ...
+    //     webgl_FragColor =     temp3 + vec4(512.0, 512.0, 512.0, 512.0)
+    //                                 + ...
+    //                                 + vec4(599.0, 599.0, 599.0, 599.0);
+    verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(127.0, 127.0, 127.0, 127.0)));");
+    verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(255.0, 255.0, 255.0, 255.0)));");
+    verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(383.0, 383.0, 383.0, 383.0)));");
+    verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(511.0, 511.0, 511.0, 511.0)));");
+    verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(599.0, 599.0, 599.0, 599.0)));");
+}
+
+// Test that a constant switch with matching case is folded away in the translated shader.
+TEST_P(GLSLOutputGLSLTest_ES3, BasicConstantSwitch)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (0)
+    {
+        case 156: f = 1234.0; break;
+        case 0:   f = 2.0; break;
+        default:  f = 3.0; break;
+    }
+    color = f == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that a constant switch without matching case is completely pruned in the translated shader.
+TEST_P(GLSLOutputGLSLTest_ES3, BasicConstantSwitchPruned)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (10)
+    {
+        case 156: f = 1234.0; break;
+        case 0:   f = 567.0; break;
+    }
+    color = f == 0.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that nested constant switch statements (https://crbug.com/548066294) are folded away.
+TEST_P(GLSLOutputGLSLTest_ES3, NestedConstantSwitch)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    int result = 0;
+    switch (0)
+    {
+        case 0:
+            result += 1;
+            switch (1)
+            {
+                case 0:
+                    result += 10;
+                    break;
+                case 1:
+                    result += 20;
+                    switch (2)
+                    {
+                        case 2:
+                            result += 300;
+                            break;
+                        default:
+                            result += 400;
+                            break;
+                    }
+                    break;
+                default:
+                    result += 50;
+                    break;
+            }
+            break;
+        case 1:
+            result += 1000;
+            break;
+        default:
+            result += 2000;
+            break;
+    }
+    color = result == 321 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that nested constant switch statements (https://crbug.com/548066294) are folded away.
+// The selector is length() in this test.
+TEST_P(GLSLOutputGLSLTest_ES3, NestedConstantSwitchWithLength)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+int sideEffects = 0;
+int[1] one()
+{
+    sideEffects += 1;
+    return int[1](1);
+}
+int[2] two()
+{
+    sideEffects += 1;
+    return int[2](2, 2);
+}
+void main()
+{
+    int result = 0;
+    switch (one().length() - 1)
+    {
+        case 0:
+            result += 1;
+            switch (one().length())
+            {
+                case 0:
+                    result += 10;
+                    break;
+                case 1:
+                    result += 20;
+                    switch (two().length())
+                    {
+                        case 2:
+                            result += 300;
+                            break;
+                        default:
+                            result += 400;
+                            break;
+                    }
+                    break;
+                default:
+                    result += 50;
+                    break;
+            }
+            break;
+        case 1:
+            result += 1000;
+            break;
+        default:
+            result += 2000;
+            break;
+    }
+    color = result == 321 && sideEffects == 3 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+// Test that fall-through across cases in a constant switch is folded away.
+TEST_P(GLSLOutputGLSLTest_ES3, FallThrough)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (1)
+    {
+        case 1: f += 5.0;
+        case 2: f += 2.0; break;
+        case 3: f += 4.0; break;
+    }
+    color = f == 7.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that conditional break inside folded switch statements emits a do-while loop wrapper.
+TEST_P(GLSLOutputGLSLTest_ES3, ConditionalBreak)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u_zero;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (0)
+    {
+        case 0:
+            if (u_zero != 0) { break; }
+            f = 2.0;
+            break;
+        default:
+            f = 5.0;
+            break;
+    }
+    color = f == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that continue targeting an enclosing loop is preserved when folding switch statements.
+TEST_P(GLSLOutputGLSLTest_ES3, ContinueInEnclosingLoop)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u_zero;
+out vec4 color;
+void main()
+{
+    int count = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        switch (0)
         {
-            verifyIsInTranslation(GL_FRAGMENT_SHADER, "loopForwardProgress");
+            case 0:
+                if (u_zero != 0) { break; }
+                if (i == 2) { continue; }
+                count += 1;
+                break;
+            default:
+                count += 100;
+                break;
+        }
+        count += 10;
+    }
+    color = count == 33 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that declarations in skipped cases are preserved without initializers in translation.
+TEST_P(GLSLOutputGLSLTest_ES3, SkippedDeclaration)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u;
+out vec4 color;
+void main()
+{
+    float res = 0.0;
+    switch (u, 1)
+    {
+        case 0:
+            float d = 4.0;
+            break;
+        case 2:
+            float e = 5.0;
+            break;
+        case 1:
+            d = 2.0;
+            res = d;
+            break;
+    }
+    color = res == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that case blocks with compound statements are truncated at break and subsequent cases
+// are not emitted in translated output.
+TEST_P(GLSLOutputGLSLTest_ES3, CaseWithCompoundStatementBlock)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (true ? 0 : u)
+    {
+        case 0:
+        {
+            f = 2.0;
+            break;
+        }
+        case 1:
+        {
+            f = 5.0;
+            break;
         }
     }
+    color = f == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
 }
 }  // namespace
 
@@ -543,6 +1092,7 @@ ANGLE_INSTANTIATE_TEST(GLSLOutputGLSLVerifyIRUseTest,
                        ES2_OPENGL().disable(Feature::UseIr),
                        ES2_OPENGLES().disable(Feature::UseIr));
 
-GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLOutputMSLTest_EnsureLoopForwardProgress);
-ANGLE_INSTANTIATE_TEST(GLSLOutputMSLTest_EnsureLoopForwardProgress,
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLOutputTest_EnsureLoopForwardProgress);
+ANGLE_INSTANTIATE_TEST(GLSLOutputTest_EnsureLoopForwardProgress,
+                       ES3_OPENGLES().enable(Feature::EnsureLoopForwardProgress),
                        ES3_METAL().enable(Feature::EnsureLoopForwardProgress));

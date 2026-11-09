@@ -4,15 +4,13 @@
 // found in the LICENSE file.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "compiler/translator/glsl/OutputGLSLBase.h"
+#include "common/unsafe_buffers.h"
 
 #include "angle_gl.h"
 #include "common/debug.h"
 #include "common/mathutil.h"
+#include "compiler/translator/BuiltInFunctionEmulator.h"
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/util.h"
 
@@ -87,13 +85,13 @@ Stream &operator<<(Stream &out, CommaSeparatedListItemPrefixGenerator &gen)
 
 TOutputGLSLBase::TOutputGLSLBase(TCompiler *compiler,
                                  TInfoSinkBase &objSink,
-                                 const ShCompileOptions &compileOptions)
+                                 const ShCompileOptions &compileOptions,
+                                 bool removeInvariant)
     : TIntermTraverser(true, true, true, &compiler->getSymbolTable()),
       mObjSink(objSink),
       mDeclaringVariable(false),
       mSkippedDeclaringAnonymousStruct(false),
       mHashFunction(compiler->getHashFunction()),
-      mUserVariablePrefix(compiler->getUserVariableNamePrefix()),
       mNameMap(compiler->getNameMap()),
       mShaderType(compiler->getShaderType()),
       mShaderVersion(compiler->getShaderVersion()),
@@ -105,12 +103,13 @@ TOutputGLSLBase::TOutputGLSLBase(TCompiler *compiler,
           compileOptions.explicitFragmentLocations ||
           (compiler->hasPixelLocalStorageUniforms() &&
            compileOptions.pls.type == ShPixelLocalStorageType::FramebufferFetch)),
+      mRemoveInvariant(removeInvariant),
       mCompileOptions(compileOptions)
 {}
 
 void TOutputGLSLBase::writeInvariantQualifier(const TType &type)
 {
-    if (!sh::RemoveInvariant(mShaderType, mShaderVersion, mOutput, mCompileOptions))
+    if (!mRemoveInvariant)
     {
         TInfoSinkBase &out = objSink();
         out << "invariant ";
@@ -310,7 +309,7 @@ void TOutputGLSLBase::writeLayoutQualifier(TIntermSymbol *variable)
 void TOutputGLSLBase::writeFieldLayoutQualifier(const TField *field)
 {
     TLayoutQualifier layoutQualifier = field->type()->getLayoutQualifier();
-    if (!field->type()->isMatrix() && !field->type()->isStructureContainingMatrices() &&
+    if (!field->type()->isMatrixPackingApplicable() &&
         layoutQualifier.imageInternalFormat == EiifUnspecified)
     {
         return;
@@ -320,7 +319,7 @@ void TOutputGLSLBase::writeFieldLayoutQualifier(const TField *field)
 
     out << "layout(";
     CommaSeparatedListItemPrefixGenerator listItemPrefix;
-    if (field->type()->isMatrix() || field->type()->isStructureContainingMatrices())
+    if (field->type()->isMatrixPackingApplicable())
     {
         switch (layoutQualifier.matrixPacking)
         {
@@ -383,7 +382,7 @@ const char *TOutputGLSLBase::mapQualifierToString(TQualifier qualifier)
                 break;
         }
     }
-    if (sh::IsGLSL130OrNewer(mOutput))
+    if (sh::IsGLSL150OrNewer(mOutput))
     {
         switch (qualifier)
         {
@@ -407,7 +406,7 @@ const char *TOutputGLSLBase::mapQualifierToString(TQualifier qualifier)
         // gl_ClipDistance / gl_CullDistance require different qualifiers based on shader type.
         case EvqClipDistance:
         case EvqCullDistance:
-            return (sh::IsGLSL130OrNewer(mOutput) || mShaderVersion > 100)
+            return (sh::IsGLSL150OrNewer(mOutput) || mShaderVersion > 100)
                        ? (mShaderType == GL_FRAGMENT_SHADER ? "in" : "out")
                        : "varying";
 
@@ -437,7 +436,7 @@ const char *TOutputGLSLBase::getIndentPrefix(int extraIndentation)
 {
     int indentDepth = std::min(kMaxIndentLevel, getCurrentBlockDepth() + extraIndentation);
     ASSERT(indentDepth >= 0);
-    return kIndent + (kMaxIndentLevel - indentDepth) * kIndentWidth;
+    return ANGLE_UNSAFE_TODO(kIndent + (kMaxIndentLevel - indentDepth) * kIndentWidth);
 }
 
 void TOutputGLSLBase::writeVariableType(const TType &type,
@@ -474,7 +473,7 @@ void TOutputGLSLBase::writeVariableType(const TType &type,
     //        ...
     //     } variable;
     const bool isStruct          = type.getStruct() != nullptr;
-    const bool isAnonymousStruct = isStruct && type.getStruct()->isNameless();
+    const bool isAnonymousStruct = isStruct && type.getStruct()->symbolType() == SymbolType::Empty;
     const bool isAnonymousStructDeclaration =
         isAnonymousStruct && symbol->symbolType() == SymbolType::Empty;
     const bool isNamedStructDeclaration = type.isStructSpecifier() && !isAnonymousStruct;
@@ -518,7 +517,7 @@ void TOutputGLSLBase::writeFunctionParameters(const TFunction *func)
 
         if (param->symbolType() != SymbolType::Empty)
         {
-            out << " " << hashName(param);
+            out << " " << hashVariableName(param);
         }
         if (type.isArray())
         {
@@ -558,7 +557,7 @@ const TConstantUnion *TOutputGLSLBase::writeConstantUnion(const TType &type,
         bool writeType = size > 1;
         if (writeType)
             out << getTypeName(type) << "(";
-        for (size_t i = 0; i < size; ++i, ++pConstUnion)
+        for (size_t i = 0; i < size; ++i, ANGLE_UNSAFE_TODO(++pConstUnion))
         {
             switch (pConstUnion->getType())
             {
@@ -614,7 +613,7 @@ void TOutputGLSLBase::writeConstructorTriplet(Visit visit, const TType &type)
 void TOutputGLSLBase::visitSymbol(TIntermSymbol *node)
 {
     TInfoSinkBase &out = objSink();
-    out << hashName(&node->variable());
+    out << hashVariableName(&node->variable());
 
     if (mDeclaringVariable && node->getType().isArray())
         out << ArrayString(node->getType());
@@ -923,10 +922,8 @@ bool TOutputGLSLBase::visitBlock(Visit visit, TIntermBlock *node)
         out << "{\n";
     }
 
-    for (TIntermSequence::const_iterator iter = node->getSequence()->begin();
-         iter != node->getSequence()->end(); ++iter)
+    for (TIntermNode *curNode : *node->getSequence())
     {
-        TIntermNode *curNode = *iter;
         ASSERT(curNode != nullptr);
 
         out << getIndentPrefix(curNode->getAsCaseNode() ? -1 : 0);
@@ -964,7 +961,7 @@ bool TOutputGLSLBase::visitGlobalQualifierDeclaration(Visit visit,
     TInfoSinkBase &out = objSink();
     ASSERT(visit == PreVisit);
     const TIntermSymbol *symbol = node->getSymbol();
-    out << (node->isPrecise() ? "precise " : "invariant ") << hashName(&symbol->variable());
+    out << (node->isPrecise() ? "precise " : "invariant ") << hashVariableName(&symbol->variable());
     return false;
 }
 
@@ -1184,19 +1181,30 @@ void TOutputGLSLBase::visitPreprocessorDirective(TIntermPreprocessorDirective *n
 
 ImmutableString TOutputGLSLBase::getTypeName(const TType &type)
 {
-    if (type.getBasicType() == EbtSamplerVideoWEBGL)
-    {
-        // TODO(http://anglebug.com/42262534): translate SamplerVideoWEBGL into different token
-        // when necessary (e.g. on Android devices)
-        return ImmutableString("sampler2D");
-    }
-
-    return GetTypeName(type, mUserVariablePrefix, mHashFunction, &mNameMap);
+    return GetTypeName(type, kUserVariableNamePrefix, mHashFunction, &mNameMap);
 }
 
 ImmutableString TOutputGLSLBase::hashName(const TSymbol *symbol)
 {
-    return HashName(symbol, mUserVariablePrefix, mHashFunction, &mNameMap);
+    return HashName(symbol, kUserVariableNamePrefix, mHashFunction, &mNameMap);
+}
+
+ImmutableString TOutputGLSLBase::hashVariableName(const TVariable *variable)
+{
+    // If this is a private variable and we're not interested in retaining debug info, use a temp
+    // name.
+    if (!mCompileOptions.outputDebugInfo && variable->symbolType() == SymbolType::UserDefined &&
+        IsPrivate(variable->getType().getQualifier()))
+    {
+        return variable->getTempName();
+    }
+
+    return hashName(variable);
+}
+
+ImmutableString TOutputGLSLBase::hashBlockName(const TSymbol *symbol)
+{
+    return HashName(symbol, kUserBlockNamePrefix, mHashFunction, &mNameMap);
 }
 
 ImmutableString TOutputGLSLBase::hashFieldName(const TField *field)
@@ -1204,7 +1212,7 @@ ImmutableString TOutputGLSLBase::hashFieldName(const TField *field)
     ASSERT(field->symbolType() != SymbolType::Empty);
     if (field->symbolType() == SymbolType::UserDefined)
     {
-        return HashName(field->name(), mUserVariablePrefix, mHashFunction, &mNameMap);
+        return HashName(field->name(), kUserVariableNamePrefix, mHashFunction, &mNameMap);
     }
 
     return field->name();
@@ -1230,16 +1238,15 @@ void TOutputGLSLBase::declareStruct(const TStructure *structure)
 
     // Keep nameless structs nameless, because they may need to match with another shader
     // stage (for example if used to declare a varying).
-    if (structure->symbolType() != SymbolType::Empty && !structure->isNameless())
+    if (structure->symbolType() != SymbolType::Empty)
     {
         out << hashName(structure) << " ";
     }
     out << "{\n";
     const TFieldList &fields = structure->fields();
-    for (size_t i = 0; i < fields.size(); ++i)
+    for (const TField *field : fields)
     {
         out << getIndentPrefix(1);
-        const TField *field    = fields[i];
         const TType &fieldType = *field->type();
         if (writeVariablePrecision(fieldType.getPrecision()))
         {
@@ -1351,7 +1358,7 @@ void TOutputGLSLBase::declareInterfaceBlock(const TType &type)
     const TInterfaceBlock *interfaceBlock = type.getInterfaceBlock();
     TInfoSinkBase &out                    = objSink();
 
-    out << hashName(interfaceBlock) << "{\n";
+    out << hashBlockName(interfaceBlock) << "{\n";
     const TFieldList &fields = interfaceBlock->fields();
     for (const TField *field : fields)
     {
@@ -1522,13 +1529,6 @@ bool TOutputGLSLBase::needsToWriteLayoutQualifier(const TType &type)
 
     if (type.getBasicType() == EbtInterfaceBlock)
     {
-        if (type.getQualifier() == EvqPixelLocalEXT)
-        {
-            // We only use per-member EXT_shader_pixel_local_storage formats, so the PLS interface
-            // block will never have a layout qualifier.
-            ASSERT(layoutQualifier.imageInternalFormat == EiifUnspecified);
-            return false;
-        }
         return true;
     }
 

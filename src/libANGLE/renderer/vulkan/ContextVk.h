@@ -19,7 +19,6 @@
 #include "libANGLE/renderer/renderer_utils.h"
 #include "libANGLE/renderer/vulkan/DisplayVk.h"
 #include "libANGLE/renderer/vulkan/DriverUniforms.h"
-#include "libANGLE/renderer/vulkan/OverlayVk.h"
 #include "libANGLE/renderer/vulkan/PersistentCommandPool.h"
 #include "libANGLE/renderer/vulkan/ShareGroupVk.h"
 #include "libANGLE/renderer/vulkan/vk_helpers.h"
@@ -79,6 +78,7 @@ enum class SurfaceAncillaryColorBehavior
     InvalidateOnPresent,
 };
 
+static constexpr GLbitfield kNoMemoryBarrierBits = 0;
 static constexpr GLbitfield kBufferMemoryBarrierBits =
     GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_ELEMENT_ARRAY_BARRIER_BIT | GL_UNIFORM_BARRIER_BIT |
     GL_COMMAND_BARRIER_BIT | GL_PIXEL_BUFFER_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT |
@@ -241,6 +241,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     // ShareGroup
     ShareGroupVk *getShareGroup() { return mShareGroupVk; }
+    FramebufferCache &getFramebufferCache() { return mFramebufferCache; }
     PipelineLayoutCache &getPipelineLayoutCache()
     {
         return mShareGroupVk->getPipelineLayoutCache();
@@ -252,6 +253,22 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     vk::DescriptorSetArray<vk::MetaDescriptorPool> &getMetaDescriptorPools()
     {
         return mShareGroupVk->getMetaDescriptorPools();
+    }
+    SamplerCache &getSamplerCache()
+    {
+        if (hasDisplayTextureShareGroup())
+        {
+            return mRenderer->getSamplerCache();
+        }
+        return mShareGroupVk->getSamplerCache();
+    }
+    SamplerYcbcrConversionCache &getYuvConversionCache()
+    {
+        if (hasDisplayTextureShareGroup())
+        {
+            return mRenderer->getYuvConversionCache();
+        }
+        return mShareGroupVk->getYuvConversionCache();
     }
 
     // Device loss
@@ -378,9 +395,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // Semaphore creation.
     SemaphoreImpl *createSemaphore() override;
 
-    // Overlay creation.
-    OverlayImpl *createOverlay(const gl::OverlayState &state) override;
-
     angle::Result dispatchCompute(const gl::Context *context,
                                   GLuint numGroupsX,
                                   GLuint numGroupsY,
@@ -389,8 +403,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     angle::Result memoryBarrier(const gl::Context *context, GLbitfield barriers) override;
     angle::Result memoryBarrierByRegion(const gl::Context *context, GLbitfield barriers) override;
-
-    ANGLE_INLINE void invalidateTexture(gl::TextureType target) override {}
 
     bool hasDisplayTextureShareGroup() const { return mState.hasDisplayTextureShareGroup(); }
 
@@ -427,7 +439,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     angle::Result onVertexArrayChange(const gl::AttributesMask dirtyAttribBits);
 
-    void invalidateDefaultAttribute(size_t attribIndex);
     void invalidateDefaultAttributes(const gl::AttributesMask &dirtyMask);
     angle::Result onFramebufferChange(FramebufferVk *framebufferVk, gl::Command command);
     void onDrawFramebufferRenderPassDescChange(FramebufferVk *framebufferVk,
@@ -477,6 +488,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                        gl::SamplerFormat format,
                                        gl::Texture **textureOut);
     void updateColorMasks();
+    void updateBlendEnabled();
     void updateBlendFuncsAndEquations();
 
     void handleError(VkResult errorCode,
@@ -518,7 +530,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result getTimestamp(uint64_t *timestampOut);
 
     const gl::Debug &getDebug() const { return mState.getDebug(); }
-    const gl::OverlayType *getOverlay() const { return mState.getOverlay(); }
 
     angle::Result onBufferReleaseToExternal(const vk::BufferHelper &buffer);
     angle::Result onImageReleaseToExternal(const vk::ImageHelper &image);
@@ -531,8 +542,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         mRenderPassCommands->imageRead(this, aspectFlags, imageAccess, image);
     }
 
-    void onImageRenderPassWrite(gl::LevelIndex level,
-                                uint32_t layerStart,
+    void onImageRenderPassWrite(gl::OwnerLevel level,
+                                gl::OwnerLayer layerStart,
                                 uint32_t layerCount,
                                 VkImageAspectFlags aspectFlags,
                                 vk::ImageAccess imageAccess,
@@ -540,43 +551,40 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     {
         ASSERT(mRenderPassCommands->started());
         mRenderPassCommands->imageWrite(this, level, layerStart, layerCount, aspectFlags,
-                                        imageAccess, image);
+                                        imageAccess, image, kNoMemoryBarrierBits);
     }
 
-    void onColorDraw(gl::LevelIndex level,
-                     uint32_t layerStart,
+    void onColorDraw(gl::OwnerLevel level,
+                     gl::OwnerLayer layerStart,
                      uint32_t layerCount,
                      vk::ImageHelper *image,
                      vk::ImageHelper *resolveImage,
-                     UniqueSerial imageSiblingSerial,
                      vk::PackedAttachmentIndex packedAttachmentIndex)
     {
         ASSERT(mRenderPassCommands->started());
         mRenderPassCommands->colorImagesDraw(level, layerStart, layerCount, image, resolveImage,
-                                             imageSiblingSerial, packedAttachmentIndex);
+                                             packedAttachmentIndex);
     }
-    void onColorResolve(gl::LevelIndex level,
-                        uint32_t layerStart,
+    void onColorResolve(gl::OwnerLevel level,
+                        gl::OwnerLayer layerStart,
                         uint32_t layerCount,
                         vk::ImageHelper *image,
                         VkImageView view,
-                        UniqueSerial imageSiblingSerial,
                         size_t colorIndexGL)
     {
         ASSERT(mRenderPassCommands->started());
         mRenderPassCommands->addColorResolveAttachment(colorIndexGL, image, view, level, layerStart,
-                                                       layerCount, imageSiblingSerial);
+                                                       layerCount);
     }
-    void onDepthStencilDraw(gl::LevelIndex level,
-                            uint32_t layerStart,
+    void onDepthStencilDraw(gl::OwnerLevel level,
+                            gl::OwnerLayer layerStart,
                             uint32_t layerCount,
                             vk::ImageHelper *image,
-                            vk::ImageHelper *resolveImage,
-                            UniqueSerial imageSiblingSerial)
+                            vk::ImageHelper *resolveImage)
     {
         ASSERT(mRenderPassCommands->started());
         mRenderPassCommands->depthStencilImagesDraw(level, layerStart, layerCount, image,
-                                                    resolveImage, imageSiblingSerial);
+                                                    resolveImage);
 
         if (image && image->useTileMemory())
         {
@@ -587,21 +595,20 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
             addImageWithTileMemory(resolveImage);
         }
     }
-    void onDepthStencilResolve(gl::LevelIndex level,
-                               uint32_t layerStart,
+    void onDepthStencilResolve(gl::OwnerLevel level,
+                               gl::OwnerLayer layerStart,
                                uint32_t layerCount,
                                VkImageAspectFlags aspects,
                                vk::ImageHelper *image,
-                               VkImageView view,
-                               UniqueSerial imageSiblingSerial)
+                               VkImageView view)
     {
         ASSERT(mRenderPassCommands->started());
         if (image && image->useTileMemory())
         {
             addImageWithTileMemory(image);
         }
-        mRenderPassCommands->addDepthStencilResolveAttachment(
-            image, view, aspects, level, layerStart, layerCount, imageSiblingSerial);
+        mRenderPassCommands->addDepthStencilResolveAttachment(image, view, aspects, level,
+                                                              layerStart, layerCount);
     }
 
     void onFragmentShadingRateRead(vk::ImageHelper *image)
@@ -610,12 +617,20 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         mRenderPassCommands->fragmentShadingRateImageRead(image);
     }
 
-    void finalizeImageLayout(vk::ImageHelper *image, UniqueSerial imageSiblingSerial);
+    bool finalizeImageLayout(vk::ImageHelper *image)
+    {
+        if (mRenderPassCommands->started())
+        {
+            return mRenderPassCommands->finalizeImageLayout(this, image);
+        }
+        return false;
+    }
 
     angle::Result getOutsideRenderPassCommandBuffer(
         const vk::CommandResources &resources,
         vk::OutsideRenderPassCommandBuffer **commandBufferOut)
     {
+        ASSERT(mCurrentQueueSerialIndex != kInvalidQueueSerialIndex);
         ANGLE_TRY(onResourceAccess(resources));
         *commandBufferOut = &mOutsideRenderPassCommands->getCommandBuffer();
         return angle::Result::Continue;
@@ -625,9 +640,15 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         const vk::CommandResources &resources,
         vk::OutsideRenderPassCommandBufferHelper **commandBufferHelperOut)
     {
+        ASSERT(mCurrentQueueSerialIndex != kInvalidQueueSerialIndex);
         ANGLE_TRY(onResourceAccess(resources));
         *commandBufferHelperOut = mOutsideRenderPassCommands;
         return angle::Result::Continue;
+    }
+
+    bool hasActiveQueueSerialIndex() const
+    {
+        return mCurrentQueueSerialIndex != kInvalidQueueSerialIndex;
     }
 
     void trackImageWithOutsideRenderPassEvent(vk::ImageHelper *image)
@@ -731,7 +752,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     VkIndexType getVkIndexType(gl::DrawElementsType glIndexType) const;
     size_t getVkIndexTypeSize(gl::DrawElementsType glIndexType) const;
-    bool shouldConvertUint8VkIndexType(gl::DrawElementsType glIndexType) const;
 
     bool isRobustResourceInitEnabled() const;
     bool hasRobustAccess() const { return mState.hasRobustAccess(); }
@@ -749,14 +769,18 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // Used by QueryVk to share query helpers between transform feedback queries.
     QueryVk *getActiveRenderPassQuery(gl::QueryType queryType) const;
 
-    void syncObjectPerfCounters(const angle::VulkanPerfCounters &commandQueuePerfCounters);
-    void updateOverlayOnPresent();
-    void addOverlayUsedBuffersCount(vk::CommandBufferHelperCommon *commandBuffer);
+    void syncObjectPerfCounters(const vk::CommandQueuePerfCounters &commandQueuePerfCounters);
 
     // For testing only.
     void setDefaultUniformBlocksMinSizeForTesting(size_t minSize);
 
     vk::BufferHelper &getEmptyBuffer() { return mEmptyBuffer; }
+
+    // Returns a 1x1 placeholder storage image matching the shader's format
+    // for unbound image units.
+    angle::Result getOrCreateNullStorageImageView(GLenum shaderFormat,
+                                                  VkImageView *imageViewOut,
+                                                  vk::ImageOrBufferViewSerial *serialOut);
 
     // Keeping track of the buffer copy size. Used to determine when to submit the outside command
     // buffer.
@@ -909,13 +933,20 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     uint32_t getCurrentFrameCount() const { return mShareGroupVk->getCurrentFrameCount(); }
 
-    bool isImageWithTileMemoryFinalized(const vk::ImageHelper *image) const;
     void addImageWithTileMemory(vk::ImageHelper *imageToAdd);
     void removeImageWithTileMemory(const vk::ImageHelper *imageToRemove);
+    const vk::ImageHelper *getImageWithTileMemory() const { return mImageWithTileMemory; }
 
     // Restore all graphics state based on current gl::State.
     void restoreAllGraphicsState();
     bool hasActiveRenderPassQuery() const { return mActiveRenderPassQueryBitmask.any(); }
+
+    angle::Result onBindTexImage();
+
+    void invalidateGraphicsDriverUniforms();
+    void invalidateDriverUniforms();
+
+    void updateCurrentActiveStreamingAttribsMask(const gl::Context *context);
 
   private:
     // Dirty bits.
@@ -986,7 +1017,17 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         DIRTY_BIT_DYNAMIC_RASTERIZER_DISCARD_ENABLE,
         DIRTY_BIT_DYNAMIC_DEPTH_BIAS_ENABLE,
         DIRTY_BIT_DYNAMIC_LOGIC_OP,
+        DIRTY_BIT_DYNAMIC_PATCH_CONTROL_POINTS,
         DIRTY_BIT_DYNAMIC_PRIMITIVE_RESTART_ENABLE,
+        // - In VK_EXT_extended_dynamic_state3
+        DIRTY_BIT_DYNAMIC_ALPHA_TO_COVERAGE_ENABLE,
+        DIRTY_BIT_DYNAMIC_ALPHA_TO_ONE_ENABLE,
+        DIRTY_BIT_DYNAMIC_COLOR_WRITE_MASK,
+        DIRTY_BIT_DYNAMIC_DEPTH_CLAMP_ENABLE,
+        DIRTY_BIT_DYNAMIC_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE,
+        DIRTY_BIT_DYNAMIC_LOGIC_OP_ENABLE,
+        DIRTY_BIT_DYNAMIC_POLYGON_MODE,
+        DIRTY_BIT_DYNAMIC_SAMPLE_MASK,
         // - In VK_KHR_fragment_shading_rate
         DIRTY_BIT_DYNAMIC_FRAGMENT_SHADING_RATE,
 
@@ -1081,7 +1122,25 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                   "Render pass using dirty bit must be handled after the render pass dirty bit");
     static_assert(DIRTY_BIT_DYNAMIC_LOGIC_OP > DIRTY_BIT_RENDER_PASS,
                   "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_PATCH_CONTROL_POINTS > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
     static_assert(DIRTY_BIT_DYNAMIC_PRIMITIVE_RESTART_ENABLE > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_ALPHA_TO_COVERAGE_ENABLE > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_ALPHA_TO_ONE_ENABLE > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_COLOR_WRITE_MASK > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_DEPTH_CLAMP_ENABLE > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_LOGIC_OP_ENABLE > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_POLYGON_MODE > DIRTY_BIT_RENDER_PASS,
+                  "Render pass using dirty bit must be handled after the render pass dirty bit");
+    static_assert(DIRTY_BIT_DYNAMIC_SAMPLE_MASK > DIRTY_BIT_RENDER_PASS,
                   "Render pass using dirty bit must be handled after the render pass dirty bit");
     static_assert(DIRTY_BIT_DYNAMIC_FRAGMENT_SHADING_RATE > DIRTY_BIT_RENDER_PASS,
                   "Render pass using dirty bit must be handled after the render pass dirty bit");
@@ -1102,6 +1161,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                             gl::PrimitiveMode mode,
                             GLint firstVertexOrInvalid,
                             GLsizei vertexOrIndexCount,
+                            GLuint baseInstance,
                             GLsizei instanceCount,
                             gl::DrawElementsType indexTypeOrInvalid,
                             const void *indices,
@@ -1110,6 +1170,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result setupIndexedDraw(const gl::Context *context,
                                    gl::PrimitiveMode mode,
                                    GLsizei indexCount,
+                                   GLuint baseInstance,
                                    GLsizei instanceCount,
                                    gl::DrawElementsType indexType,
                                    const void *indices);
@@ -1139,6 +1200,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                     gl::PrimitiveMode mode,
                                     GLint firstVertex,
                                     GLsizei vertexOrIndexCount,
+                                    GLuint baseInstance,
+                                    GLsizei instanceCount,
                                     gl::DrawElementsType indexTypeOrInvalid,
                                     const void *indices,
                                     uint32_t *numIndicesOut);
@@ -1186,11 +1249,11 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result invalidateCurrentTextures(const gl::Context *context, gl::Command command);
     angle::Result invalidateCurrentShaderResources(gl::Command command);
     angle::Result invalidateCurrentShaderUniformBuffers();
-    void invalidateGraphicsDriverUniforms();
-    void invalidateDriverUniforms();
 
     angle::Result handleNoopDrawEvent() override;
     angle::Result handleNoopMultiDrawEvent() override;
+
+    void markNewRenderPassDirtyBits();
 
     // Handlers for graphics pipeline dirty bits.
     angle::Result handleDirtyGraphicsMemoryBarrier(DirtyBits::Iterator *dirtyBitsIterator,
@@ -1288,9 +1351,30 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                                             DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsDynamicLogicOp(DirtyBits::Iterator *dirtyBitsIterator,
                                                     DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicPatchControlPoints(
+        DirtyBits::Iterator *dirtyBitsIterator,
+        DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsDynamicPrimitiveRestartEnable(
         DirtyBits::Iterator *dirtyBitsIterator,
         DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicAlphaToCoverageEnable(
+        DirtyBits::Iterator *dirtyBitsIterator,
+        DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicAlphaToOneEnable(DirtyBits::Iterator *dirtyBitsIterator,
+                                                             DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicColorWriteMask(DirtyBits::Iterator *dirtyBitsIterator,
+                                                           DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicDepthClampEnable(DirtyBits::Iterator *dirtyBitsIterator,
+                                                             DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicDepthClipNegativeOneToOne(
+        DirtyBits::Iterator *dirtyBitsIterator,
+        DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicLogicOpEnable(DirtyBits::Iterator *dirtyBitsIterator,
+                                                          DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicPolygonMode(DirtyBits::Iterator *dirtyBitsIterator,
+                                                        DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsDynamicSampleMask(DirtyBits::Iterator *dirtyBitsIterator,
+                                                       DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsDynamicFragmentShadingRate(
         DirtyBits::Iterator *dirtyBitsIterator,
         DirtyBits dirtyBitMask);
@@ -1335,11 +1419,12 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                  QueueSubmitReason reason);
     angle::Result flushImpl(const gl::Context *context);
 
-    void handleDeviceLost();
-    bool shouldEmulateSeamfulCubeMapSampling() const;
     void clearAllGarbage();
     void dumpCommandStreamDiagnostics();
     angle::Result flushOutsideRenderPassCommands();
+    angle::Result flushAndSubmitCommandsImpl(const vk::Semaphore *signalSemaphore,
+                                             const vk::SharedExternalFence *externalFence,
+                                             QueueSubmitReason queueSubmitReason);
     // Flush commands and end render pass without setting any dirty bits.
     // flushCommandsAndEndRenderPass() and flushDirtyGraphicsRenderPass() will set the dirty bits
     // directly or through the iterator respectively.  Outside those two functions, this shouldn't
@@ -1434,7 +1519,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     void generateOutsideRenderPassCommandsQueueSerial();
     void generateRenderPassCommandsQueueSerial(QueueSerial *queueSerialOut);
 
-    angle::Result finalizeImagesWithTileMemory();
+    angle::Result finalizeImageWithTileMemory();
 
     angle::ImageLoadContext mImageLoadContext;
 
@@ -1443,10 +1528,15 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     vk::RenderPassCommandBuffer *mRenderPassCommandBuffer;
 
+    const vk::PipelineLayout *mCurrentPipelineLayout;
+
     vk::PipelineHelper *mCurrentGraphicsPipeline;
     vk::PipelineHelper *mCurrentGraphicsPipelineShaders;
     vk::PipelineHelper *mCurrentComputePipeline;
     gl::PrimitiveMode mCurrentDrawMode;
+    uint32_t mCurrentRasterizationSamples;
+    gl::DrawBufferMask mMissingOutputsMask;
+    gl::DrawBufferMask mDirtyColorWriteMasks;
 
     WindowSurfaceVk *mCurrentWindowSurface;
     // Records the current rotation of the surface (draw/read) framebuffer, derived from
@@ -1501,6 +1591,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     DirtyBits mComputeDirtyBits;
     DirtyBits mNonIndexedDirtyBitsMask;
     DirtyBits mIndexedDirtyBitsMask;
+    DirtyBits mNewRenderPassDirtyBits;
     DirtyBits mNewGraphicsCommandBufferDirtyBits;
     DirtyBits mNewComputeCommandBufferDirtyBits;
     DirtyBits mDynamicStateDirtyBits;
@@ -1565,8 +1656,10 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // in-flight buffer or not that we need to release at submission time.
     gl::AttribArray<vk::DynamicBuffer> mStreamedVertexBuffers;
     gl::AttributesMask mHasInFlightStreamedVertexBuffers;
+    // The bit is set when the attribute is current actively streamed (using dynamic buffer).
+    gl::AttributesMask mCurrentActiveStreamingAttribsMask;
 
-    std::vector<vk::ImageHelper *> mImagesWithTileMemory;
+    vk::ImageHelper *mImageWithTileMemory;
 
     // We use a single pool for recording commands. We also keep a free list for pool recycling.
     vk::SecondaryCommandPools mCommandPools;
@@ -1588,6 +1681,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     vk::GarbageObjects mCurrentGarbage;
 
     RenderPassCache mRenderPassCache;
+    FramebufferCache mFramebufferCache;
     // Used with dynamic rendering as it doesn't use render passes.
     vk::RenderPass mNullRenderPass;
 
@@ -1673,6 +1767,14 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // atomic counter buffer array, or places where there is no vertex buffer since Vulkan does not
     // allow binding a null vertex buffer.
     vk::BufferHelper mEmptyBuffer;
+    struct NullStorageImageEntry
+    {
+        vk::ImageHelper image;
+        vk::ImageView view;
+        vk::ImageOrBufferViewSerial serial;
+        NullStorageImageEntry() : image(VK_IMAGE_TYPE_2D) {}
+    };
+    angle::HashMap<GLenum, std::unique_ptr<NullStorageImageEntry>> mNullStorageImages;
 
     // Storage for default uniforms of ProgramVks and ProgramPipelineVks.
     vk::DynamicBuffer mDefaultUniformStorage;

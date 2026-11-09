@@ -6,10 +6,9 @@
 
 // TextureFixedRateCompressionTest: Tests for GL_EXT_texture_storage_compression
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <optional>
 
+#include "common/span.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -52,18 +51,19 @@ static const char *Name(int value)
 class TextureFixedRateCompressionTest : public ANGLETest<>
 {
   protected:
-    void invalidTestHelper(const GLint *attribs);
-    void basicTestHelper(const GLint *attribs);
-    void RenderToTexture(const GLenum internalFormat, const GLint *attribs);
+    void invalidTestHelper(std::optional<Span<const GLint>> attribs);
+    void basicTestHelper(Span<const GLint> attribs);
+    void renderToTexture(const GLenum internalFormat, Span<const GLint> attribs);
 };
 
-void TextureFixedRateCompressionTest::invalidTestHelper(const GLint *attribs)
+void TextureFixedRateCompressionTest::invalidTestHelper(std::optional<Span<const GLint>> attribs)
 {
     GLTexture tex;
     glBindTexture(GL_TEXTURE_2D, tex);
     ASSERT_GL_NO_ERROR();
 
-    glTexStorageAttribs2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, 16, 16, attribs);
+    glTexStorageAttribs2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, 16, 16,
+                             attribs ? attribs->data() : nullptr);
     ASSERT_GL_NO_ERROR();
 
     /* Query compression rate */
@@ -72,7 +72,7 @@ void TextureFixedRateCompressionTest::invalidTestHelper(const GLint *attribs)
     ASSERT_GL_NO_ERROR();
 
     glBindImageTexture(0, tex, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA8);
-    if (nullptr == attribs)
+    if (!attribs)
     {
         /* Default attrib which is non-compressed formats will return GL_NO_ERROR. */
         ASSERT_GL_NO_ERROR();
@@ -84,14 +84,15 @@ void TextureFixedRateCompressionTest::invalidTestHelper(const GLint *attribs)
         /* Compressed texture is not supported in glBindImageTexture. */
         ASSERT_GL_ERROR(GL_INVALID_VALUE);
     }
-    else if (attribs[1] == GL_SURFACE_COMPRESSION_FIXED_RATE_NONE_EXT || attribs[0] == GL_NONE)
+    else if ((*attribs)[1] == GL_SURFACE_COMPRESSION_FIXED_RATE_NONE_EXT ||
+             (*attribs)[0] == GL_NONE)
     {
         /* Default attrib which is non-compressed formats will return GL_NO_ERROR. */
         ASSERT_GL_NO_ERROR();
     }
 }
 
-void TextureFixedRateCompressionTest::basicTestHelper(const GLint *attribs)
+void TextureFixedRateCompressionTest::basicTestHelper(Span<const GLint> attribs)
 {
     GLTexture texture;
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -99,7 +100,7 @@ void TextureFixedRateCompressionTest::basicTestHelper(const GLint *attribs)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     ASSERT_GL_NO_ERROR();
 
-    glTexStorageAttribs2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, 16, 16, attribs);
+    glTexStorageAttribs2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, 16, 16, attribs.data());
     ASSERT_GL_NO_ERROR();
 
     /* Query and check the compression rate */
@@ -107,7 +108,7 @@ void TextureFixedRateCompressionTest::basicTestHelper(const GLint *attribs)
     glGetTexParameteriv(GL_TEXTURE_2D, GL_SURFACE_COMPRESSION_EXT, &compressRate);
     ASSERT_GL_NO_ERROR();
 
-    if (nullptr != attribs && compressRate != GL_SURFACE_COMPRESSION_FIXED_RATE_NONE_EXT &&
+    if (compressRate != GL_SURFACE_COMPRESSION_FIXED_RATE_NONE_EXT &&
         attribs[1] != GL_SURFACE_COMPRESSION_FIXED_RATE_DEFAULT_EXT)
     {
         EXPECT_EQ(compressRate, attribs[1]);
@@ -141,11 +142,11 @@ TEST_P(TextureFixedRateCompressionTest, Invalidate)
     glTexStorageAttribs2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, 16, 16, kAttribListInvalid);
     ASSERT_GL_ERROR(GL_INVALID_VALUE);
 
-    for (const GLint *attribs : kDefaultAttribList)
+    for (Span<const GLint> attribs : kDefaultAttribList)
     {
         invalidTestHelper(attribs);
     }
-    invalidTestHelper(nullptr);
+    invalidTestHelper(std::nullopt);  // No attrib list.
 }
 
 // Test basic usage of glTexStorageAttribs2DEXT
@@ -153,17 +154,16 @@ TEST_P(TextureFixedRateCompressionTest, TexStorageAttribs2DEXT)
 {
     ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_texture_storage_compression"));
 
-    for (const GLint *attribs : kDefaultAttribList)
+    for (Span<const GLint> attribs : kDefaultAttribList)
     {
         basicTestHelper(attribs);
     }
 }
 
-void TextureFixedRateCompressionTest::RenderToTexture(const GLenum internalFormat,
-                                                      const GLint *attribs)
+void TextureFixedRateCompressionTest::renderToTexture(const GLenum internalFormat,
+                                                      Span<const GLint> attribs)
 {
     GLint compressRate = 0;
-    ASSERT(attribs != nullptr);
 
     GLTexture texture;
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -171,7 +171,7 @@ void TextureFixedRateCompressionTest::RenderToTexture(const GLenum internalForma
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     ASSERT_GL_NO_ERROR();
 
-    glTexStorageAttribs2DEXT(GL_TEXTURE_2D, 1, internalFormat, 16, 16, attribs);
+    glTexStorageAttribs2DEXT(GL_TEXTURE_2D, 1, internalFormat, 16, 16, attribs.data());
     ASSERT_GL_NO_ERROR();
 
     GLFramebuffer fbo;
@@ -225,7 +225,7 @@ TEST_P(TextureFixedRateCompressionTest, RenderToTexture)
             for (int i = 0; i < numRates; ++i)
             {
                 attribList[1] = rates[i];
-                RenderToTexture(internalFormat, attribList);
+                renderToTexture(internalFormat, attribList);
             }
         }
     }

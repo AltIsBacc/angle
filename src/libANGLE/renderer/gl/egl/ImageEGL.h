@@ -47,13 +47,14 @@ class ImageEGL final : public ImageGL
     const FunctionsEGL *mEGL;
 
     // State needed for initialization
+    const gl::Context *mGLContext;
     EGLContext mContext;
     EGLenum mTarget;
     bool mPreserveImage;
 
     GLenum mNativeInternalFormat;
 
-    EGLImage mImage;
+    std::shared_ptr<EGLImage> mImage;
 };
 
 }  // namespace rx

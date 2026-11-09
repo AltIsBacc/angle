@@ -7,11 +7,11 @@
 //   This test prints out the extension strings, configs and their attributes
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include <gtest/gtest.h>
+#include "common/unsafe_buffers.h"
+
+#include <array>
+#include <string_view>
 
 #include "common/string_utils.h"
 #include "test_utils/ANGLETest.h"
@@ -87,13 +87,14 @@ TEST_P(EGLPrintEGLinfoTest, PrintEGLInfo)
     std::cout << "    Client APIs: " << GetEGLString(mDisplay, EGL_CLIENT_APIS) << std::endl;
 
     std::cout << "    EGL Client Extensions:" << std::endl;
-    for (auto extension : ParseExtensions(GetEGLString(EGL_NO_DISPLAY, EGL_EXTENSIONS)))
+    for (const std::string &extension :
+         ParseExtensions(GetEGLString(EGL_NO_DISPLAY, EGL_EXTENSIONS)))
     {
         std::cout << "        " << extension << std::endl;
     }
 
     std::cout << "    EGL Display Extensions:" << std::endl;
-    for (auto extension : ParseExtensions(GetEGLString(mDisplay, EGL_EXTENSIONS)))
+    for (const std::string &extension : ParseExtensions(GetEGLString(mDisplay, EGL_EXTENSIONS)))
     {
         std::cout << "        " << extension << std::endl;
     }
@@ -151,7 +152,7 @@ TEST_P(EGLPrintEGLinfoTest, PrintGLInfo)
 
         FILE *fp = fopen(artifactPath.c_str(), "wb");
         ASSERT(fp);
-        fwrite(jsonData.data(), sizeof(uint8_t), jsonData.size(), fp);
+        ANGLE_UNSAFE_TODO(fwrite(jsonData.data(), sizeof(uint8_t), jsonData.size(), fp));
         fclose(fp);
     }
 #endif  // defined(ANGLE_HAS_RAPIDJSON)
@@ -167,12 +168,12 @@ TEST_P(EGLPrintEGLinfoTest, PrintGLInfo)
 
 #define QUERY_ARRAY_HELPER(enumValue, enumString, size, stream)               \
     {                                                                         \
-        GLint result[size];                                                   \
-        glGetIntegerv(enumValue, result);                                     \
+        std::array<GLint, size> result;                                       \
+        glGetIntegerv(enumValue, result.data());                              \
         ASSERT_GL_NO_ERROR();                                                 \
         std::stringstream results;                                            \
-        for (int i = 0; i < size; i++)                                        \
-            results << result[i] << " ";                                      \
+        for (GLint value : result)                                            \
+            results << value << " ";                                          \
         stream << enumString + std::string(",") + results.str() << std::endl; \
     }
 
@@ -554,7 +555,7 @@ TEST_P(EGLPrintFeaturesVulkanExtensionsInfoTest, LogEnabledFeatures)
     {
         const char *name   = eglQueryStringiANGLE(mDisplay, EGL_FEATURE_NAME_ANGLE, i);
         const char *status = eglQueryStringiANGLE(mDisplay, EGL_FEATURE_STATUS_ANGLE, i);
-        if (std::strcmp(status, kEnabled) == 0)
+        if (std::string_view(status) == kEnabled)
         {
             std::cout << name << std::endl;
         }
@@ -584,9 +585,9 @@ TEST_P(EGLPrintFeaturesVulkanExtensionsInfoTest, LogEnabledVulkanExtensions)
     EXPECT_NE(extensions, nullptr);
 
     std::cout << "Enabled Vulkan Instance extensions:" << std::endl;
-    while (extensions[nextExtension])
+    while (ANGLE_UNSAFE_TODO(extensions[nextExtension]))
     {
-        std::cout << extensions[nextExtension] << std::endl;
+        std::cout << ANGLE_UNSAFE_TODO(extensions[nextExtension]) << std::endl;
         nextExtension++;
     }
 
@@ -598,9 +599,9 @@ TEST_P(EGLPrintFeaturesVulkanExtensionsInfoTest, LogEnabledVulkanExtensions)
     EXPECT_NE(extensions, nullptr);
 
     std::cout << "Enabled Vulkan Device extensions:" << std::endl;
-    while (extensions[nextExtension])
+    while (ANGLE_UNSAFE_TODO(extensions[nextExtension]))
     {
-        std::cout << extensions[nextExtension] << std::endl;
+        std::cout << ANGLE_UNSAFE_TODO(extensions[nextExtension]) << std::endl;
         nextExtension++;
     }
 }

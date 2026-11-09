@@ -28,6 +28,7 @@
 use crate::ir::*;
 use crate::*;
 
+#[derive(Clone, Copy)]
 #[cfg_attr(debug_assertions, derive(Debug))]
 struct RegisterInfo {
     // How many times the register is read from.
@@ -41,6 +42,21 @@ struct RegisterInfo {
     // Whether the register must be marked as having a side effect if ever accessed.  See
     // `preprocess_block_registers`'s comment on OpCode::Load.
     mark_side_effect_if_read: bool,
+    // The AST "depth" of the register.  In general, for an instruction like:
+    //
+    //     result = Op arg0 arg1 ...
+    //
+    // depth is calculated as:
+    //
+    //     Depth(result) = max(Depth(arg0), Depth(arg1), ...) + 1
+    //
+    // If the expression is too deep, it's cached in a temporary to avoid too-deep ASTs.
+    depth: u32,
+    // For the result of an Access* instruction, whether the access chain rooted at this register
+    // (inclusive) contains at least one dynamic, i.e. register-valued, index.  Chains made purely
+    // of static indices need no work at dereference time, so this allows skipping the chain walk
+    // in `mark_pointer_indices_read` entirely.  Always false for non-Access* results.
+    contains_dynamic_indices: bool,
 }
 
 impl RegisterInfo {
@@ -50,6 +66,8 @@ impl RegisterInfo {
             has_side_effect: false,
             is_complex: false,
             mark_side_effect_if_read: false,
+            contains_dynamic_indices: false,
+            depth: 1,
         }
     }
 }
@@ -72,11 +90,10 @@ impl BreakInfo {
     }
 }
 
-#[cfg_attr(debug_assertions, derive(Debug))]
 struct State<'a> {
     ir_meta: &'a mut IRMeta,
     // Used to know when temporary variables are needed
-    register_info: HashMap<RegisterId, RegisterInfo>,
+    register_info: Vec<RegisterInfo>,
     // List of registers without side effect that are not necessarily cached in a temp variable,
     // see comment in `preprocess_block_registers` for details.
     uncached_registers: Vec<RegisterId>,
@@ -96,23 +113,55 @@ struct State<'a> {
     // `NextBlock`, instead of `LoopIf`.
     break_stack: Vec<BreakInfo>,
     condition_stack: Vec<Option<Block>>,
+    // List of registers that have side effect but are never read.  They are not cached in
+    // variables, and the generator should be aware of them so as to not defer them until use
+    // (which will be never).
+    uncached_but_with_side_effect: ast::UncachedRegistersWithSideEffect,
 }
 
-pub fn run(ir: &mut IR) {
+pub struct Options {
+    // The step after this transformation is to generate an output in a high-level language.  To
+    // avoid stack overflows in recursive algorithms that process this output, expression
+    // complexity is limited in this pass.  The depth limit for these expressions in AST form
+    // is given in |max_expression_complexity|.
+    pub max_expression_complexity: u32,
+}
+
+pub fn run(ir: &mut IR, options: &Options) -> ast::UncachedRegistersWithSideEffect {
     let mut state = State {
         ir_meta: &mut ir.meta,
-        register_info: HashMap::new(),
+        register_info: Vec::new(),
         uncached_registers: Vec::new(),
         continue_stack: Vec::new(),
         break_stack: Vec::new(),
         condition_stack: Vec::new(),
+        uncached_but_with_side_effect: ast::UncachedRegistersWithSideEffect::new(),
     };
 
-    // Pre-process the registers to determine when temporary variables are needed.
-    preprocess_registers(&mut state, &ir.function_entries);
+    // First, duplicate the continue block, if any, before each `continue` branch, because
+    // it may be too complicated to be placed inside a `for ()` expression.  Afterwards,
+    // the IR no longer has continue blocks.
+    //
+    // At the same time, duplicate the condition block of do-loops before each `continue`
+    // branch.
+    traverser::transformer::for_each_function(
+        &mut state,
+        &mut ir.function_entries,
+        &|state, _, entry| {
+            traverser::transformer::for_each_block(
+                state,
+                entry,
+                &|state, block| transform_continue_instructions_pre_visit(state, block),
+                &|state, block| transform_continue_instructions_post_visit(state, block),
+            );
+        },
+    );
 
-    // First, create temporary variables for the result of instructions that have side
-    // effects and yet are read from multiple times.
+    // Pre-process the registers to determine when temporary variables are needed.
+    preprocess_registers(&mut state, &ir.function_entries, options);
+
+    // Create temporary variables for the result of instructions that have side effects and yet are
+    // read from multiple times.
     traverser::transformer::for_each_instruction(
         &mut state,
         &mut ir.function_entries,
@@ -134,27 +183,10 @@ pub fn run(ir: &mut IR) {
         },
     );
 
-    // Finally, duplicate the continue block, if any, before each `continue` branch, because
-    // it may be too complicated to be placed inside a `for ()` expression.  Afterwards,
-    // the IR no longer has continue blocks.
-    //
-    // At the same time, duplicate the condition block of do-loops before each `continue`
-    // branch.
-    traverser::transformer::for_each_function(
-        &mut state,
-        &mut ir.function_entries,
-        &|state, _, entry| {
-            traverser::transformer::for_each_block(
-                state,
-                entry,
-                &|state, block| transform_continue_instructions_pre_visit(state, block),
-                &|state, block| transform_continue_instructions_post_visit(state, block),
-            );
-        },
-    );
+    state.uncached_but_with_side_effect
 }
 
-fn get_op_read_ids(opcode: &OpCode) -> Vec<TypedId> {
+fn for_each_op_arg(opcode: &OpCode, mut f: impl FnMut(TypedId)) {
     match opcode {
         OpCode::MergeInput
         | OpCode::Discard
@@ -165,13 +197,13 @@ fn get_op_read_ids(opcode: &OpCode) -> Vec<TypedId> {
         | OpCode::Loop
         | OpCode::DoLoop
         | OpCode::Return(None)
-        | OpCode::Merge(None) => vec![],
+        | OpCode::Merge(None) => (),
         OpCode::Call(_, params)
         | OpCode::ConstructVectorFromMultiple(params)
         | OpCode::ConstructMatrixFromMultiple(params)
         | OpCode::ConstructStruct(params)
         | OpCode::ConstructArray(params)
-        | OpCode::BuiltIn(_, params) => params.clone(),
+        | OpCode::BuiltIn(_, params) => params.iter().copied().for_each(f),
         &OpCode::Return(Some(id))
         | &OpCode::Merge(Some(id))
         | &OpCode::If(id)
@@ -188,7 +220,7 @@ fn get_op_read_ids(opcode: &OpCode) -> Vec<TypedId> {
         | &OpCode::AccessVectorComponentMulti(id, _)
         | &OpCode::AccessStructField(id, _)
         | &OpCode::Load(id)
-        | &OpCode::Unary(_, id) => vec![id],
+        | &OpCode::Unary(_, id) => f(id),
         &OpCode::ExtractVectorComponentDynamic(lhs, rhs)
         | &OpCode::ExtractMatrixColumn(lhs, rhs)
         | &OpCode::ExtractArrayElement(lhs, rhs)
@@ -196,50 +228,51 @@ fn get_op_read_ids(opcode: &OpCode) -> Vec<TypedId> {
         | &OpCode::AccessMatrixColumn(lhs, rhs)
         | &OpCode::AccessArrayElement(lhs, rhs)
         | &OpCode::Store(lhs, rhs)
-        | &OpCode::Binary(_, lhs, rhs) => vec![lhs, rhs],
+        | &OpCode::Binary(_, lhs, rhs) => {
+            f(lhs);
+            f(rhs);
+        }
         &OpCode::Texture(ref texture_op, sampler, coord) => {
-            let mut read_ids = Vec::with_capacity(4);
-            read_ids.push(sampler);
-            read_ids.push(coord);
+            f(sampler);
+            f(coord);
             match texture_op {
                 &TextureOpCode::Implicit { is_proj: _, offset }
                 | &TextureOpCode::Gather { offset } => {
-                    offset.inspect(|&id| read_ids.push(id));
+                    offset.inspect(|&id| f(id));
                 }
                 &TextureOpCode::Compare { compare } => {
-                    read_ids.push(compare);
+                    f(compare);
                 }
                 &TextureOpCode::Lod { is_proj: _, lod, offset } => {
-                    read_ids.push(lod);
-                    offset.inspect(|&id| read_ids.push(id));
+                    f(lod);
+                    offset.inspect(|&id| f(id));
                 }
                 &TextureOpCode::CompareLod { compare, lod } => {
-                    read_ids.push(compare);
-                    read_ids.push(lod);
+                    f(compare);
+                    f(lod);
                 }
                 &TextureOpCode::Bias { is_proj: _, bias, offset } => {
-                    read_ids.push(bias);
-                    offset.inspect(|&id| read_ids.push(id));
+                    f(bias);
+                    offset.inspect(|&id| f(id));
                 }
                 &TextureOpCode::CompareBias { compare, bias } => {
-                    read_ids.push(compare);
-                    read_ids.push(bias);
+                    f(compare);
+                    f(bias);
                 }
                 &TextureOpCode::Grad { is_proj: _, dx, dy, offset } => {
-                    read_ids.push(dx);
-                    read_ids.push(dy);
-                    offset.inspect(|&id| read_ids.push(id));
+                    f(dx);
+                    f(dy);
+                    offset.inspect(|&id| f(id));
                 }
                 &TextureOpCode::GatherComponent { component, offset } => {
-                    read_ids.push(component);
-                    offset.inspect(|&id| read_ids.push(id));
+                    f(component);
+                    offset.inspect(|&id| f(id));
                 }
                 &TextureOpCode::GatherRef { refz, offset } => {
-                    read_ids.push(refz);
-                    offset.inspect(|&id| read_ids.push(id));
+                    f(refz);
+                    offset.inspect(|&id| f(id));
                 }
             };
-            read_ids
         }
         &OpCode::Alias(_) => {
             panic!("Internal error: Aliases must have been resolved before text generation")
@@ -308,18 +341,90 @@ fn can_reorder_expressions_after_op(opcode: &OpCode) -> (bool, bool) {
 
 fn clear_uncached_registers(
     uncached_registers: &mut Vec<RegisterId>,
-    register_info: &mut HashMap<RegisterId, RegisterInfo>,
+    register_info: &mut [RegisterInfo],
 ) {
     uncached_registers.iter().for_each(|id| {
-        register_info.get_mut(id).unwrap().mark_side_effect_if_read = true;
+        register_info[id.id as usize].mark_side_effect_if_read = true;
     });
     uncached_registers.clear();
 }
 
-fn preprocess_block_registers(state: &mut State, block: &Block) {
+fn get_access_base(opcode: &OpCode) -> Option<TypedId> {
+    match *opcode {
+        OpCode::AccessVectorComponent(base, _)
+        | OpCode::AccessVectorComponentMulti(base, _)
+        | OpCode::AccessStructField(base, _)
+        | OpCode::AccessVectorComponentDynamic(base, _)
+        | OpCode::AccessMatrixColumn(base, _)
+        | OpCode::AccessArrayElement(base, _) => Some(base),
+        _ => None,
+    }
+}
+
+fn get_dynamic_index(opcode: &OpCode) -> Option<TypedId> {
+    match *opcode {
+        OpCode::AccessVectorComponentDynamic(_, index)
+        | OpCode::AccessMatrixColumn(_, index)
+        | OpCode::AccessArrayElement(_, index) => Some(index),
+        _ => None,
+    }
+}
+
+fn mark_register_read(info: &mut RegisterInfo) {
+    info.read_count += 1;
+    if info.mark_side_effect_if_read {
+        info.has_side_effect = true;
+    }
+}
+
+fn mark_pointer_indices_read(
+    ir_meta: &IRMeta,
+    register_info: &mut [RegisterInfo],
+    mut ptr: TypedId,
+) {
+    while let Id::Register(reg) = ptr.id {
+        // The rest of the chain has no dynamic indices.
+        if !register_info[reg.id as usize].contains_dynamic_indices {
+            break;
+        }
+        let opcode = &ir_meta.get_instruction(reg).op;
+        let Some(base) = get_access_base(opcode) else {
+            break;
+        };
+        if let Some(Id::Register(index_reg)) = get_dynamic_index(opcode).map(|index| index.id) {
+            mark_register_read(&mut register_info[index_reg.id as usize]);
+        }
+        ptr = base;
+    }
+}
+
+// Access* instructions only build an address path; nothing is evaluated or dereferenced until the
+// pointer is used, so their operands are marked as read at the point of use instead (see
+// mark_pointer_indices_read). Returns (max_arg_depth, contains_dynamic_indices).
+fn preprocess_access_operands(
+    register_info: &[RegisterInfo],
+    base: TypedId,
+    opcode: &OpCode,
+) -> (u32, bool) {
+    let mut max_arg_depth = 0;
+    let mut contains_dynamic_indices = false;
+    if let Id::Register(base_reg) = base.id {
+        let base_info = &register_info[base_reg.id as usize];
+        max_arg_depth = base_info.depth;
+        contains_dynamic_indices = base_info.contains_dynamic_indices;
+    }
+    if let Some(Id::Register(index_reg)) = get_dynamic_index(opcode).map(|index| index.id) {
+        max_arg_depth = max_arg_depth.max(register_info[index_reg.id as usize].depth);
+        // A register-valued index is precisely what makes an access dynamic.
+        contains_dynamic_indices = true;
+    }
+    (max_arg_depth, contains_dynamic_indices)
+}
+
+fn preprocess_block_registers(state: &mut State, block: &Block, options: &Options) {
     // Add an unassuming entry for the merge input, if any.
     if let Some(input) = block.input {
-        state.register_info.entry(input.id).or_insert(RegisterInfo::new());
+        state.register_info[input.id.id as usize] = RegisterInfo::new();
     }
 
     for instruction in &block.instructions {
@@ -337,15 +442,30 @@ fn preprocess_block_registers(state: &mut State, block: &Block) {
 
         // Mark every potentially-register Id in the arguments of the opcode as being
         // accessed.
-        for id in get_op_read_ids(opcode) {
-            if let Id::Register(id) = id.id {
-                let read_register_info = state.register_info.get_mut(&id).unwrap();
-                read_register_info.read_count += 1;
+        let mut max_arg_depth = 0;
+        // For Access* instructions, whether the chain rooted at the result has a dynamic index.
+        let mut contains_dynamic_indices = false;
 
-                if read_register_info.mark_side_effect_if_read {
-                    read_register_info.has_side_effect = true;
+        if let Some(base) = get_access_base(opcode) {
+            (max_arg_depth, contains_dynamic_indices) =
+                preprocess_access_operands(&state.register_info, base, opcode);
+        } else {
+            for_each_op_arg(opcode, |arg| {
+                let Id::Register(reg) = arg.id else {
+                    return;
+                };
+
+                let info = &mut state.register_info[reg.id as usize];
+                max_arg_depth = max_arg_depth.max(info.depth);
+                if state.ir_meta.get_type(arg.type_id).is_pointer() {
+                    // Pointers are not materializable in the output languages, so the index
+                    // expressions are re-evaluated at every dereference.  Mark the dynamic
+                    // indices of the Access* chain as read here.
+                    mark_pointer_indices_read(state.ir_meta, &mut state.register_info, arg);
+                } else {
+                    mark_register_read(info);
                 }
-            }
+            });
         }
 
         if !can_reorder_expressions && op_only_reads_from_args {
@@ -356,102 +476,75 @@ fn preprocess_block_registers(state: &mut State, block: &Block) {
         // effect.  Similarly, if it is complex, mark it as such.
         if let Some(result_id) = result {
             // Add an unassuming entry for the result.
-            let result_info =
-                state.register_info.entry(result_id.id).or_insert(RegisterInfo::new());
+            let result_info = &mut state.register_info[result_id.id.id as usize];
+            result_info.depth = max_arg_depth + 1;
+            result_info.contains_dynamic_indices = contains_dynamic_indices;
 
-            match opcode {
-                OpCode::Call(..)
-                | OpCode::Unary(UnaryOpCode::PrefixIncrement, _)
-                | OpCode::Unary(UnaryOpCode::PrefixDecrement, _)
-                | OpCode::Unary(UnaryOpCode::PostfixIncrement, _)
-                | OpCode::Unary(UnaryOpCode::PostfixDecrement, _)
-                | OpCode::Unary(UnaryOpCode::AtomicCounter, _)
-                | OpCode::Unary(UnaryOpCode::AtomicCounterIncrement, _)
-                | OpCode::Unary(UnaryOpCode::AtomicCounterDecrement, _)
-                | OpCode::Unary(UnaryOpCode::PixelLocalLoadANGLE, _)
-                | OpCode::Binary(BinaryOpCode::Modf, _, _)
-                | OpCode::Binary(BinaryOpCode::Frexp, _, _)
-                | OpCode::Binary(BinaryOpCode::AtomicAdd, _, _)
-                | OpCode::Binary(BinaryOpCode::AtomicMin, _, _)
-                | OpCode::Binary(BinaryOpCode::AtomicMax, _, _)
-                | OpCode::Binary(BinaryOpCode::AtomicAnd, _, _)
-                | OpCode::Binary(BinaryOpCode::AtomicOr, _, _)
-                | OpCode::Binary(BinaryOpCode::AtomicXor, _, _)
-                | OpCode::Binary(BinaryOpCode::AtomicExchange, _, _)
-                | OpCode::BuiltIn(BuiltInOpCode::UaddCarry, _)
-                | OpCode::BuiltIn(BuiltInOpCode::UsubBorrow, _)
-                | OpCode::BuiltIn(BuiltInOpCode::UmulExtended, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImulExtended, _)
-                | OpCode::BuiltIn(BuiltInOpCode::AtomicCompSwap, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageLoad, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicAdd, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicMin, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicMax, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicAnd, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicOr, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicXor, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicExchange, _)
-                | OpCode::BuiltIn(BuiltInOpCode::ImageAtomicCompSwap, _) => {
-                    // TODO(http://anglebug.com/349994211): for now, assume every function call has
-                    // a side effect.  This can be optimized with a prepass going over functions
-                    // and checking if they have side effect.  AST assumes user functions have side
-                    // effects, and mostly uses isKnownNotToHaveSideEffects for built-ins, which
-                    // are separately checked here.  Some internal transformations mark a function
-                    // as no-side effect, but no real benefit comes from that IMO.  This is
-                    // probably fine as-is.
-                    //
-                    // TODO(http://anglebug.com/349994211): move the above logic (of which ops have
-                    // side effect) to a query in OpCode or IRMeta.  Later, when DCE is performed
-                    // the same information is needed.
-                    result_info.has_side_effect = true;
-                    result_info.is_complex = true;
-                }
-                OpCode::AccessVectorComponent(..)
-                | OpCode::AccessVectorComponentMulti(..)
-                | OpCode::AccessVectorComponentDynamic(..)
-                | OpCode::AccessMatrixColumn(..)
-                | OpCode::AccessStructField(..)
-                | OpCode::AccessArrayElement(..)
-                | OpCode::ExtractVectorComponentDynamic(..)
-                | OpCode::ExtractMatrixColumn(..)
-                | OpCode::ExtractStructField(..)
-                | OpCode::ExtractArrayElement(..)
-                | OpCode::Load(..) => {
-                    // Consider Access* instructions not complex and not having side effect, it's
-                    // impossible to cache the result in the AST.
-                    // Most Extract* instructions also don't need to be cached in a variable.
-                    // For load, we would ideally not want to cache the result in a variable only
-                    // to have to load from it on every use again.
-                }
-                OpCode::ExtractVectorComponent(vector_id, _)
-                | OpCode::ExtractVectorComponentMulti(vector_id, _) => {
-                    // Shading languages typically don't expect swizzle applied to swizzle, so
-                    // check to see if the value being swizzled was itself loaded from a swizzled
-                    // pointer, in which case mark the load operation as "complex" with "multiple
-                    // reads" so it gets cached in a temporary.
-                    let load_id = vector_id.id.get_register();
-                    if let OpCode::Load(pointer_id) = state.ir_meta.get_instruction(load_id).op
-                        && let Id::Register(pointer_id) = pointer_id.id
-                        && matches!(
-                            state.ir_meta.get_instruction(pointer_id).op,
-                            OpCode::AccessVectorComponentMulti(..)
-                        )
-                    {
-                        let load_register_info = state.register_info.get_mut(&load_id).unwrap();
-                        // The ExtractVectorComponent* instruction has already counted as
-                        // one read, so one more is enough.
-                        load_register_info.read_count += 1;
-                        debug_assert!(load_register_info.read_count > 1);
-                        load_register_info.is_complex = true;
+            if opcode.has_side_effect() {
+                result_info.has_side_effect = true;
+                result_info.is_complex = true;
+            } else {
+                match opcode {
+                    OpCode::AccessVectorComponent(..)
+                    | OpCode::AccessVectorComponentMulti(..)
+                    | OpCode::AccessVectorComponentDynamic(..)
+                    | OpCode::AccessMatrixColumn(..)
+                    | OpCode::AccessStructField(..)
+                    | OpCode::AccessArrayElement(..)
+                    | OpCode::ExtractVectorComponentDynamic(..)
+                    | OpCode::ExtractMatrixColumn(..)
+                    | OpCode::ExtractStructField(..)
+                    | OpCode::ExtractArrayElement(..)
+                    | OpCode::Load(..) => {
+                        // Consider Access* instructions not complex and not having side effect,
+                        // it's impossible to cache the result in the AST.
+                        // Most Extract* instructions also don't need to be cached in a variable.
+                        // For load, we would ideally not want to cache the result in a variable
+                        // only to have to load from it on every use again.
                     }
-                }
-                _ => {
-                    // For everything else, consider the result complex so the logic is not
-                    // duplicated.  This can cover everything from a+b to texture calls
-                    // etc.
-                    result_info.is_complex = true;
-                }
-            };
+                    OpCode::ExtractVectorComponent(vector_id, _)
+                    | OpCode::ExtractVectorComponentMulti(vector_id, _) => {
+                        // Shading languages typically don't expect swizzle applied to swizzle, so
+                        // check to see if the value being swizzled was itself loaded from a
+                        // swizzled pointer, in which case mark the load
+                        // operation as "complex" with "multiple
+                        // reads" so it gets cached in a temporary.
+                        let load_id = vector_id.id.get_register();
+                        if let OpCode::Load(pointer_id) = state.ir_meta.get_instruction(load_id).op
+                            && let Id::Register(pointer_id) = pointer_id.id
+                            && matches!(
+                                state.ir_meta.get_instruction(pointer_id).op,
+                                OpCode::AccessVectorComponentMulti(..)
+                            )
+                        {
+                            let load_register_info = &mut state.register_info[load_id.id as usize];
+                            // The ExtractVectorComponent* instruction has already counted as
+                            // one read, so one more is enough.
+                            load_register_info.read_count += 1;
+                            debug_assert!(load_register_info.read_count > 1);
+                            load_register_info.is_complex = true;
+                        }
+                    }
+                    _ => {
+                        // For everything else, consider the result complex so the logic is not
+                        // duplicated.  This can cover everything from a+b to texture calls
+                        // etc.
+                        result_info.is_complex = true;
+
+                        // If the expression is too deep, pretend it has a side effect (if it's ever
+                        // accessed) so it gets cached in a variable.
+                        //
+                        // To avoid corner-case issues, such as Store adding another depth not
+                        // counted here, take only half of max_expression_complexity as the limit.
+                        if result_info.depth > options.max_expression_complexity / 2 {
+                            result_info.mark_side_effect_if_read = true;
+                            // Reset the depth, as any instruction reading from this is going to
+                            // read from the cached variable instead.
+                            result_info.depth = 1;
+                        }
+                    }
+                };
+            }
 
             // When a register does not have a side effect, it refers to a temporary expression
             // that is yet to be used.  For example, take `a + b`.  To produce smaller more
@@ -492,7 +585,7 @@ fn preprocess_block_registers(state: &mut State, block: &Block) {
             // later if a mutating instruction is encountered, all these registers are marked as
             // needing to be cached if read from again.  For simplicity, we don't track exactly
             // which variables may be modified by the mutating instruction.
-            if !state.register_info.get(&result_id.id).unwrap().has_side_effect {
+            if !state.register_info[result_id.id.id as usize].has_side_effect {
                 let result_type = state.ir_meta.get_type(result_id.type_id);
                 let can_be_cached = !matches!(
                     result_type,
@@ -509,13 +602,18 @@ fn preprocess_block_registers(state: &mut State, block: &Block) {
     }
 }
 
-fn preprocess_registers(state: &mut State, function_entries: &[Option<Block>]) {
+fn preprocess_registers(state: &mut State, function_entries: &[Option<Block>], options: &Options) {
+    // Register ids are dense indices into the instruction list, so the info can be indexed by them
+    // directly.  No registers are created during this pre-processing.
+    state.register_info = vec![RegisterInfo::new(); state.ir_meta.total_register_count() as usize];
     traverser::visitor::for_each_function(
         state,
         function_entries,
-        |_, _| {},
+        |state, _| {
+            state.uncached_registers.clear();
+        },
         |state, block, _, _| {
-            preprocess_block_registers(state, block);
+            preprocess_block_registers(state, block, options);
             traverser::visitor::VISIT_SUB_BLOCKS
         },
         |_, _| {},
@@ -550,7 +648,7 @@ fn has_constants_with_higher_precision(operands: &[TypedId]) -> Option<Precision
         highest_non_constant_precision,
     );
 
-    if highest_constant_precision != Precision::NotApplicable
+    if highest_constant_precision.is_assigned()
         && highest_non_constant_precision != highest_precision
     {
         Some(highest_non_constant_precision)
@@ -563,7 +661,7 @@ fn declare_temp_variable_if_high_precision_constant(
     state: &mut State,
     id: TypedId,
     other_operands_precision: Precision,
-    transforms: &mut Vec<traverser::Transform>,
+    builder: &mut instruction::Builder<traverser::Transforms>,
 ) -> TypedId {
     if let Id::Constant(constant_id) = id.id
         && instruction::precision::higher_precision(id.precision, other_operands_precision)
@@ -576,8 +674,8 @@ fn declare_temp_variable_if_high_precision_constant(
             Some(constant_id),
             VariableScope::Local,
         );
-        transforms.push(traverser::Transform::DeclareVariable(variable_id));
-        variable_typed_id
+        builder.declare(variable_id);
+        builder.load(state.ir_meta, variable_typed_id)
     } else {
         id
     }
@@ -587,7 +685,7 @@ fn declare_temp_variable_if_high_precision_constant_vec(
     state: &mut State,
     non_constant_precision: Precision,
     params: Vec<TypedId>,
-    transforms: &mut Vec<traverser::Transform>,
+    builder: &mut instruction::Builder<traverser::Transforms>,
 ) -> Vec<TypedId> {
     params
         .iter()
@@ -596,7 +694,7 @@ fn declare_temp_variable_if_high_precision_constant_vec(
                 state,
                 id,
                 non_constant_precision,
-                transforms,
+                builder,
             )
         })
         .collect()
@@ -605,7 +703,7 @@ fn declare_temp_variable_if_high_precision_constant_vec(
 fn declare_temp_variable_for_constant_operands(
     state: &mut State,
     id: RegisterId,
-    transforms: &mut Vec<traverser::Transform>,
+    builder: &mut instruction::Builder<traverser::Transforms>,
 ) {
     // If a constant is used in the instruction whose precision is higher than the other operands,
     // a temporary variable is created to hold its value so that its precision can be retained.
@@ -632,7 +730,7 @@ fn declare_temp_variable_for_constant_operands(
     // for `1.0`.
     let instruction = state.ir_meta.get_instruction(id);
     let result = instruction.result;
-    if result.precision == Precision::NotApplicable {
+    if !result.precision.is_assigned() {
         return;
     }
 
@@ -656,7 +754,7 @@ fn declare_temp_variable_for_constant_operands(
                         state,
                         non_constant_precision,
                         params.clone(),
-                        transforms,
+                        builder,
                     ),
                 ))
             } else {
@@ -670,7 +768,7 @@ fn declare_temp_variable_for_constant_operands(
                         state,
                         non_constant_precision,
                         params.clone(),
-                        transforms,
+                        builder,
                     ),
                 ))
             } else {
@@ -683,7 +781,7 @@ fn declare_temp_variable_for_constant_operands(
                     state,
                     non_constant_precision,
                     params.clone(),
-                    transforms,
+                    builder,
                 )))
             } else {
                 None
@@ -697,7 +795,7 @@ fn declare_temp_variable_for_constant_operands(
                         state,
                         non_constant_precision,
                         params.clone(),
-                        transforms,
+                        builder,
                     ),
                 ))
             } else {
@@ -710,13 +808,13 @@ fn declare_temp_variable_for_constant_operands(
                     state,
                     lhs,
                     non_constant_precision,
-                    transforms,
+                    builder,
                 );
                 let rhs = declare_temp_variable_if_high_precision_constant(
                     state,
                     rhs,
                     non_constant_precision,
-                    transforms,
+                    builder,
                 );
                 Some(OpCode::Binary(binary_op, lhs, rhs))
             } else {
@@ -735,31 +833,41 @@ fn declare_temp_variable_for_constant_operands(
 fn transform_instruction(
     state: &mut State,
     instruction: &BlockInstruction,
-) -> Vec<traverser::Transform> {
+) -> traverser::Transforms {
     // If the instruction is:
     //
-    // - a register
-    // - with side effect or it's complex
+    // - a register, and
+    // - with side effects
+    //
+    // Then a temporary variable must be created to hold the result, otherwise the generator may
+    // reorder it incorrectly as it caches expressions until they are used later.  The exception
+    // here is when the instruction has a side effect but its result is never used.  In that case,
+    // a temporary variable is not generated, but the instruction is marked as such.  When the
+    // generator sees such an instruction, it should treat it as a Void instruction, which cannot
+    // be cached for later.  This leads to simpler output, e.g. `i++` in a `for` loop wouldn't need
+    // a variable to hold its unused result.
+    //
+    // To avoid duplicating complex code, similarly the result of the instruction is cached in a
+    // variable if it's:
+    //
+    // - a register, and
+    // - complex, and
     // - read multiple times
     //
-    // Then a temporary variable must be created to hold the result.  For the sake of
-    // simplicity, any register with a side effect is placed in a temporary, because
-    // otherwise it's hard to tell when generating the AST if that statement should be
-    // placed directly in the block, or whether it's used in another expression that will
-    // eventually turn into a statement in the *same* block.
-    //
-    // TODO(http://anglebug.com/349994211): if the result of the expression with side effect is
-    // never used, for example in a common `i++`, then a variable can be eliminated if
-    // `has_side_effect` is `&& read_count > 0` in the `if` below, but then the read count
-    // information needs to be provided to `ast::Generator` so that expressions with side effect
-    // but also read_count == 0 could be placed in the block they are executed and their value
-    // discarded.
     if let &BlockInstruction::Register(id) = instruction {
-        let info = &state.register_info[&id];
-        let cache_in_variable_if_necessary = info.has_side_effect || info.is_complex;
+        let info = &state.register_info[id.id as usize];
+        let read_any_times = info.read_count > 0;
         let read_multiple_times = info.read_count > 1;
+        let cache_in_variable_if_necessary =
+            (info.has_side_effect && read_any_times) || (info.is_complex && read_multiple_times);
 
-        if cache_in_variable_if_necessary && read_multiple_times || info.has_side_effect {
+        if info.has_side_effect && !read_any_times {
+            state.uncached_but_with_side_effect.insert(id);
+        }
+
+        let mut builder = instruction::Builder::<traverser::Transforms>::new();
+
+        if cache_in_variable_if_necessary {
             let instruction = state.ir_meta.get_instruction(id);
             let id = instruction.result;
 
@@ -779,43 +887,34 @@ fn transform_instruction(
                 None,
                 VariableScope::Local,
             );
-            let mut transforms = vec![traverser::Transform::DeclareVariable(variable_id)];
+            builder.declare(variable_id);
 
             let new_register_id = state.ir_meta.assign_new_register_to_instruction(id.id);
-            declare_temp_variable_for_constant_operands(state, new_register_id, &mut transforms);
+            declare_temp_variable_for_constant_operands(state, new_register_id, &mut builder);
 
             //     %new_id = ...
-            transforms
-                .push(traverser::Transform::Add(BlockInstruction::new_typed(new_register_id)));
+            //               Store %new_variable %new_id
+            //     %id     = Load %new_variable
+            builder.add_register(new_register_id);
 
             let new_register_id =
                 TypedId::new(Id::new_register(new_register_id), id.type_id, id.precision);
 
-            //               Store %new_variable %new_id
-            traverser::add_void_instruction(
-                &mut transforms,
-                instruction::make!(store, state.ir_meta, variable_typed_id, new_register_id),
-            );
-            //     %id     = Load %new_variable
-            traverser::add_typed_instruction(
-                &mut transforms,
-                instruction::make_with_result_id!(load, state.ir_meta, id, variable_typed_id),
-            );
-
-            transforms
+            builder.store(state.ir_meta, variable_typed_id, new_register_id);
+            let loaded = builder.load(state.ir_meta, variable_typed_id);
+            builder.finish_with_result(state.ir_meta, id, loaded)
         } else {
-            let mut transforms = vec![];
-            declare_temp_variable_for_constant_operands(state, id, &mut transforms);
-            if !transforms.is_empty() {
+            declare_temp_variable_for_constant_operands(state, id, &mut builder);
+            if !builder.is_empty() {
                 // If the instruction is rewritten (i.e. variables are added),
                 // `declare_temp_variable_for_constant_operands` makes it use the same result id
                 // (as `id.id`), so just keep that in the list of instructions.
-                transforms.push(traverser::Transform::Keep);
+                builder.keep();
             }
-            transforms
+            builder.finish()
         }
     } else {
-        vec![]
+        traverser::Transforms::new()
     }
 }
 
@@ -968,8 +1067,16 @@ fn transform_continue_instructions_pre_visit<'block>(
 
 fn transform_continue_pre_visit_loop(state: &mut State, block: &mut Block) {
     // Transformation 1: Take the loop continue block and push in `continue_stack`.
-    let continue_block = block.block2.take().map(|block| *block);
-    state.continue_stack.push(continue_block);
+    //
+    // To support retaining trivial `for` loops, pretend there's no `continue` block for them so
+    // they aren't replicated.
+    //
+    if util::block_ends_in_trivial_for_loop(state.ir_meta, block).is_some() {
+        state.continue_stack.push(None);
+    } else {
+        let continue_block = block.block2.take().map(|block| *block);
+        state.continue_stack.push(continue_block);
+    }
 
     // Transformation 2: Add an entry to `break_stack`
     state.break_stack.push(BreakInfo::new_loop());
@@ -1076,6 +1183,23 @@ fn transform_continue_adjust_condition_block(
     let condition = block.get_terminating_op().get_loop_condition();
     block.unterminate();
 
+    // If loop condition is true, it becomes effectively `if (false) break; continue;`,
+    // simplify to `continue` directly.
+    if condition.id == Id::Constant(CONSTANT_ID_TRUE) {
+        block.terminate(OpCode::Continue);
+        return;
+    }
+    // If loop condition is false, it becomes effectively `if (true) break; continue;`,
+    // simplify to `break` directly.
+    if condition.id == Id::Constant(CONSTANT_ID_FALSE) {
+        for variable_id in variables_to_set {
+            let variable_id = TypedId::from_bool_variable_id(state.ir_meta, variable_id);
+            block.add_void_instruction(OpCode::Store(variable_id, TYPED_CONSTANT_ID_TRUE));
+        }
+        block.terminate(OpCode::Break);
+        return;
+    }
+
     // Create another block that only contains the `Continue` branch, and set it as the
     // merge block of the original block.
     let mut continue_block = Block::new();
@@ -1085,7 +1209,7 @@ fn transform_continue_adjust_condition_block(
     // Create a block that sets the given variables all to true, and ends in `Break`.
     let mut break_block = Block::new();
     for variable_id in variables_to_set {
-        let variable_id = TypedId::from_bool_variable_id(variable_id);
+        let variable_id = TypedId::from_bool_variable_id(state.ir_meta, variable_id);
         break_block.add_void_instruction(OpCode::Store(variable_id, TYPED_CONSTANT_ID_TRUE));
     }
     break_block.terminate(OpCode::Break);
@@ -1143,8 +1267,8 @@ fn transform_continue_post_visit_switch<'block>(
         //     %value = Load %variable
         //     If %value
         let mut propagate_break_block = Block::new();
-        let load_instruction =
-            instruction::make!(load, state.ir_meta, TypedId::from_bool_variable_id(variable_id));
+        let variable_typed_id = TypedId::from_bool_variable_id(state.ir_meta, variable_id);
+        let load_instruction = instruction::make!(load, state.ir_meta, variable_typed_id);
         let load_value = propagate_break_block.add_typed_instruction(load_instruction);
         propagate_break_block.terminate(OpCode::If(load_value));
         propagate_break_block.set_if_true_block(break_block);

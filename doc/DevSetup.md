@@ -6,11 +6,11 @@ ANGLE provides OpenGL ES 3.1 and EGL 1.5 libraries and tests. You can use these 
 
 ### Version Control
 
-ANGLE uses git for version control. Helpful documentation can be found at [http://git-scm.com/documentation](http://git-scm.com/documentation).
+ANGLE uses git for version control. Helpful documentation can be found at [http://git-scm.com/install](http://git-scm.com/install).
 
 ### Required First Setup (do this first)
 
-Note: If you are building inside a Chromium checkout [see these instructions instead](https://chromium.googlesource.com/angle/angle/+/HEAD/doc/BuildingAngleForChromiumDevelopment.md).
+Note: If you are building inside a Chromium checkout (i.e. to build the Chrome browser) [see these instructions instead](https://chromium.googlesource.com/angle/angle/+/HEAD/doc/BuildingAngleForChromiumDevelopment.md).  Otherwise, continue to build a standalone version of ANGLE (e.g. for a layered driver on Android).
 
 Required on all platforms:
 
@@ -30,7 +30,7 @@ On Windows:
    * The SDK is required for GN-generated Visual Studio projects, the D3D Debug runtime, and the latest HLSL Compiler runtime.
  * (optional) See the [Chromium Windows build instructions](https://chromium.googlesource.com/chromium/src/+/main/docs/windows_build_instructions.md) for more info.
 
-On Linux:
+On Linux (required for Android development):
 
  * Dependencies will be handled later (see `install-build-deps.sh` below).
 
@@ -117,9 +117,9 @@ from earlier steps. Ninja automatically calls GN to regenerate the build
 files on any configuration change. `autoninja` automatically specifies a
 thread count to `ninja` based on your system configuration.
 
-### Building with Reclient (Google employees only)
+### Building with Remote Execution (Google employees only)
 
-Reclient is the recommended distributed compiler service to build ANGLE faster.
+Siso with Remote Execution is the recommended distributed compiler service to build ANGLE faster.
 
 Step 1. Follow [Setup remote execution](https://g3doc.corp.google.com/company/teams/chrome/linux_build_instructions.md?cl=head#setup-remote-execution)
 to download the required configuration, and complete the authentication.
@@ -159,7 +159,7 @@ gcloud auth login
 
 If asked for a project ID, enter "0".
 
-Step 2. Enable the usage of reclient by adding below content in GN arg:
+Step 2. Enable remote execution by adding below content in GN arg:
 
 ```
 use_remoteexec = true

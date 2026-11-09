@@ -7,10 +7,7 @@
 //   Pointer parameter capture functions for the OpenGL ES 3.0 entry points.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/unsafe_buffers.h"
 #include "libANGLE/capture/capture_gles_2_0_autogen.h"
 #include "libANGLE/capture/capture_gles_3_0_autogen.h"
 
@@ -215,14 +212,14 @@ void CaptureGetActiveUniformBlockName_uniformBlockName(const State &glState,
 }
 
 void CaptureGetActiveUniformBlockiv_params(const State &glState,
-                                           ShaderProgramID program,
-                                           UniformBlockIndex uniformBlockIndex,
-                                           GLenum pname,
+                                           ShaderProgramID programPacked,
+                                           UniformBlockIndex uniformBlockIndexPacked,
+                                           UniformBlockParameter pnamePacked,
                                            GLint *params,
                                            ParamCapture *paramCapture)
 {
-    CaptureGetActiveUniformBlockivParameters(glState, program, uniformBlockIndex, pname,
-                                             paramCapture);
+    CaptureGetActiveUniformBlockivParameters(glState, programPacked, uniformBlockIndexPacked,
+                                             pnamePacked, paramCapture);
 }
 
 void CaptureGetActiveUniformsiv_uniformIndices(const State &glState,
@@ -324,7 +321,7 @@ void CaptureGetInternalformativ_params(const State &glState,
         {
             case GL_SAMPLES:
                 // Maximum case: 1, 2, 4, 8, 16, 32 (IMPLEMENTATION_MAX_SAMPLES)
-                paramCount = rx::Log2(gl::IMPLEMENTATION_MAX_SAMPLES) + 1;
+                paramCount = gl::log2(static_cast<size_t>(gl::IMPLEMENTATION_MAX_SAMPLES)) + 1;
                 break;
             case GL_SURFACE_COMPRESSION_EXT:
                 // From SURFACE_COMPRESSION_FIXED_RATE_1BPC_EXT to
@@ -388,8 +385,8 @@ void CaptureGetProgramBinary_binary(const State &glState,
 }
 
 void CaptureGetQueryObjectuiv_params(const State &glState,
-                                     QueryID id,
-                                     GLenum pname,
+                                     QueryID idPacked,
+                                     QueryObjectParameter pnamePacked,
                                      GLuint *params,
                                      ParamCapture *paramCapture)
 {
@@ -399,7 +396,7 @@ void CaptureGetQueryObjectuiv_params(const State &glState,
 
 void CaptureGetQueryiv_params(const State &glState,
                               QueryType targetPacked,
-                              GLenum pname,
+                              QueryParameter pnamePacked,
                               GLint *params,
                               ParamCapture *paramCapture)
 {
@@ -408,8 +405,8 @@ void CaptureGetQueryiv_params(const State &glState,
 }
 
 void CaptureGetSamplerParameterfv_params(const State &glState,
-                                         SamplerID sampler,
-                                         GLenum pname,
+                                         SamplerID samplerPacked,
+                                         SamplerParameter pnamePacked,
                                          GLfloat *params,
                                          ParamCapture *paramCapture)
 {
@@ -418,8 +415,8 @@ void CaptureGetSamplerParameterfv_params(const State &glState,
 }
 
 void CaptureGetSamplerParameteriv_params(const State &glState,
-                                         SamplerID sampler,
-                                         GLenum pname,
+                                         SamplerID samplerPacked,
+                                         SamplerParameter pnamePacked,
                                          GLint *params,
                                          ParamCapture *paramCapture)
 {
@@ -525,7 +522,7 @@ void CaptureGetUniformIndices_uniformNames(const State &glState,
 {
     for (GLsizei index = 0; index < uniformCount; ++index)
     {
-        CaptureString(uniformNames[index], paramCapture);
+        CaptureString(ANGLE_UNSAFE_TODO(uniformNames[index]), paramCapture);
     }
 }
 
@@ -605,21 +602,21 @@ void CaptureProgramBinary_binary(const State &glState,
 }
 
 void CaptureSamplerParameterfv_param(const State &glState,
-                                     SamplerID sampler,
-                                     GLenum pname,
+                                     SamplerID samplerPacked,
+                                     SamplerParameter pnamePacked,
                                      const GLfloat *param,
                                      ParamCapture *paramCapture)
 {
-    CaptureTextureAndSamplerParameter_params<GLfloat>(pname, param, paramCapture);
+    CaptureTextureAndSamplerParameter_params<GLfloat>(ToGLenum(pnamePacked), param, paramCapture);
 }
 
 void CaptureSamplerParameteriv_param(const State &glState,
-                                     SamplerID sampler,
-                                     GLenum pname,
+                                     SamplerID samplerPacked,
+                                     SamplerParameter pnamePacked,
                                      const GLint *param,
                                      ParamCapture *paramCapture)
 {
-    CaptureTextureAndSamplerParameter_params<GLint>(pname, param, paramCapture);
+    CaptureTextureAndSamplerParameter_params<GLint>(ToGLenum(pnamePacked), param, paramCapture);
 }
 
 void CaptureTexImage3D_pixels(const State &glState,
@@ -685,7 +682,7 @@ void CaptureTransformFeedbackVaryings_varyings(const State &glState,
 {
     for (GLsizei index = 0; index < count; ++index)
     {
-        CaptureString(varyings[index], paramCapture);
+        CaptureString(ANGLE_UNSAFE_TODO(varyings[index]), paramCapture);
     }
 }
 

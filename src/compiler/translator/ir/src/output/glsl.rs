@@ -11,6 +11,7 @@
 // this.  It will also serve as basis for WGSL, MSL, and HLSL generation.
 //
 
+use super::utils;
 use crate::ir::*;
 use crate::*;
 
@@ -128,7 +129,6 @@ impl Generator {
             ImageDimension::Buffer => "Buffer",
             ImageDimension::External => "ExternalOES",
             ImageDimension::ExternalY2Y => "External2DY2YEXT",
-            ImageDimension::Video => "VideoWEBGL",
             ImageDimension::PixelLocal => {
                 base_name = "pixelLocalANGLE";
                 ""
@@ -198,7 +198,6 @@ impl Generator {
     ) {
         match decoration {
             Decoration::Invariant => qualifiers.push("invariant".to_string()),
-            Decoration::Precise => qualifiers.push("precise".to_string()),
             Decoration::Interpolant => qualifiers.push("interpolant".to_string()),
             Decoration::Smooth => qualifiers.push("smooth".to_string()),
             Decoration::Flat => qualifiers.push("flat".to_string()),
@@ -239,16 +238,21 @@ impl Generator {
             Decoration::RasterOrdered => layout_qualifiers.push("raster_ordered".to_string()),
             Decoration::EmulatedViewIDOut => layout_qualifiers.push("flat out".to_string()),
             Decoration::EmulatedViewIDIn => layout_qualifiers.push("flat in".to_string()),
+            Decoration::EmulatedMultiDrawBuiltIn(_) => (),
         }
     }
 
-    fn qualifiers_str(precision: Precision, decorations: &Decorations) -> String {
+    fn qualifiers_str(precision: Precision, precise: bool, decorations: &Decorations) -> String {
         let mut qualifiers = vec![];
         let mut layout_qualifiers = vec![];
 
         decorations.decorations.iter().for_each(|&decoration| {
             Self::add_qualifier_str(decoration, &mut qualifiers, &mut layout_qualifiers);
         });
+
+        if precise {
+            qualifiers.push("precise".to_string());
+        }
 
         let mut result = String::new();
         if !layout_qualifiers.is_empty() {
@@ -264,7 +268,7 @@ impl Generator {
             result.push(' ');
         }
         match precision {
-            Precision::NotApplicable => (),
+            Precision::NotApplicable | Precision::Unassigned => (),
             Precision::Low => result.push_str("lowp "),
             Precision::Medium => result.push_str("mediump "),
             Precision::High => result.push_str("highp "),
@@ -276,6 +280,10 @@ impl Generator {
         (match built_in {
             BuiltIn::InstanceID => "gl_InstanceID",
             BuiltIn::VertexID => "gl_VertexID",
+            BuiltIn::InstanceIndex | BuiltIn::VertexIndex => panic!(
+                "InternalError: gl_VertexIndex / gl_InstanceIndex are not expected in the GLSL \
+                 generator"
+            ),
             BuiltIn::Position => "gl_Position",
             BuiltIn::PointSize => "gl_PointSize",
             BuiltIn::BaseVertex => "gl_BaseVertex",
@@ -306,7 +314,6 @@ impl Generator {
             BuiltIn::SampleMask => "gl_SampleMask",
             BuiltIn::NumSamples => "gl_NumSamples",
             BuiltIn::NumWorkGroups => "gl_NumWorkGroups",
-            BuiltIn::WorkGroupSize => "gl_WorkGroupSize",
             BuiltIn::WorkGroupID => "gl_WorkGroupID",
             BuiltIn::LocalInvocationID => "gl_LocalInvocationID",
             BuiltIn::GlobalInvocationID => "gl_GlobalInvocationID",
@@ -329,27 +336,43 @@ impl Generator {
             BuiltIn::TessLevelInner => "gl_TessLevelInner",
             BuiltIn::TessCoord => "gl_TessCoord",
             BuiltIn::BoundingBoxOES => "gl_BoundingBoxOES",
-            BuiltIn::PixelLocalEXT => "gl_PixelLocalEXT",
         })
         .to_string()
     }
 
-    fn name_str(name: &Name, temp_prefix: &'static str, id: u32) -> String {
+    fn field_built_in_str(built_in: BuiltIn) -> String {
+        (match built_in {
+            BuiltIn::Position => "gl_Position",
+            BuiltIn::PointSize => "gl_PointSize",
+            BuiltIn::ClipDistance => "gl_ClipDistance",
+            BuiltIn::CullDistance => "gl_CullDistance",
+            _ => panic!("Internal error: Invalid built-in field"),
+        })
+        .to_string()
+    }
+
+    fn name_str(
+        name: &Name,
+        temp_prefix: &'static str,
+        user_prefix: &'static str,
+        id: u32,
+    ) -> String {
         format!(
             "{}{}{}",
             match name.source {
                 // Make sure unnamed interface blocks remain unnamed.
-                NameSource::ShaderInterface =>
-                    if !name.name.is_empty() {
-                        USER_SYMBOL_PREFIX
-                    } else {
-                        ""
-                    },
+                NameSource::ShaderInterface if !name.name.is_empty() => user_prefix,
                 NameSource::Temporary => temp_prefix,
                 _ => "",
             },
             name.name,
-            if name.source == NameSource::Temporary { format!("_{id}") } else { "".to_string() }
+            if name.source == NameSource::Temporary {
+                format!("_{id}")
+            } else if let Some(suffix) = name.suffix {
+                format!("_{}", suffix)
+            } else {
+                "".to_string()
+            }
         )
     }
 
@@ -359,6 +382,7 @@ impl Generator {
         name: &Name,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: &Decorations,
         built_in: Option<BuiltIn>,
         initializer: Option<ConstantId>,
@@ -366,17 +390,15 @@ impl Generator {
         id: u32,
     ) -> (String, String) {
         let type_info = &self.types[&type_id];
-        let qualifiers = Self::qualifiers_str(precision, decorations);
+        let qualifiers = Self::qualifiers_str(precision, precise, decorations);
         let var_name = if let Some(built_in) = built_in {
             Self::built_in_str(built_in, ir_meta.get_shader_type())
         } else {
-            Self::name_str(name, temp_prefix, id)
+            Self::name_str(name, temp_prefix, USER_VARIABLE_PREFIX, id)
         };
 
-        let mut declaration_text = format!(
-            "{qualifiers}{} {var_name}{}",
-            &type_info.use_text_pre, &type_info.use_text_post
-        );
+        let mut declaration_text =
+            format!("{qualifiers}{} {var_name}{}", type_info.use_text_pre, type_info.use_text_post);
 
         if let Some(constant_id) = initializer {
             write!(declaration_text, " = {}", self.get_constant_expression(constant_id)).unwrap();
@@ -533,27 +555,14 @@ impl Generator {
         glsl_variables: &HashMap<VariableId, GlslVariable>,
         block: &mut String,
         variables: &[VariableId],
+        for_loop_variable: Option<VariableId>,
     ) {
         variables.iter().for_each(|id| {
             let glsl_variable = &glsl_variables[id];
-            if !glsl_variable.skip_declaration {
+            if !glsl_variable.skip_declaration && for_loop_variable != Some(*id) {
                 writeln!(block, "{};", glsl_variable.declaration_text).unwrap();
             }
         });
-    }
-
-    fn get_swizzle(index: u32) -> &'static str {
-        match index {
-            0 => "x",
-            1 => "y",
-            2 => "z",
-            3 => "w",
-            _ => panic!("Internal error: Unexpected swizzle index"),
-        }
-    }
-
-    fn get_swizzle_multi(indices: &[u32]) -> String {
-        indices.iter().map(|&index| Self::get_swizzle(index)).collect::<Vec<_>>().join("")
     }
 
     fn get_constant_expression(&self, id: ConstantId) -> &String {
@@ -620,9 +629,13 @@ impl ast::Target for Generator {
         // TODO(http://anglebug.com/349994211): add #version and #extension lines when ANGLE uses
         // the IR all the way through to
         // codegen.
-        println!("{}", self.function_declarations);
-        // TODO(http://anglebug.com/349994211): return the resulting string instead
-        "".to_string()
+        format!(
+            "{}{}{}{}",
+            self.preamble,
+            self.type_declarations,
+            self.global_variables,
+            self.function_declarations
+        )
     }
 
     fn new_type(&mut self, ir_meta: &IRMeta, id: TypeId, type_info: &Type) {
@@ -635,28 +648,32 @@ impl ast::Target for Generator {
                     let base_type = &self.types[&type_id];
                     (
                         base_type.declaration_text_pre.clone(),
-                        format!("{}[{count}]", &base_type.declaration_text_post),
+                        format!("{}[{count}]", base_type.declaration_text_post),
                         Some(base_type.use_text_pre.clone()),
-                        Some(format!("{}[{count}]", &base_type.use_text_post)),
+                        Some(format!("{}[{count}]", base_type.use_text_post)),
                     )
                 }
                 &Type::UnsizedArray(type_id) => {
                     let base_type = &self.types[&type_id];
                     (
                         base_type.declaration_text_pre.clone(),
-                        format!("{}[]", &base_type.declaration_text_post),
+                        format!("{}[]", base_type.declaration_text_post),
                         Some(base_type.use_text_pre.clone()),
-                        Some(format!("{}[]", &base_type.use_text_post)),
+                        Some(format!("{}[]", base_type.use_text_post)),
                     )
                 }
                 &Type::Image(basic_type, image_type) => {
                     (Self::image_type_str(basic_type, image_type), "".to_string(), None, None)
                 }
                 Type::Struct(name, fields, specialization) => {
-                    let name = Self::name_str(name, TEMP_STRUCT_PREFIX, id.id);
+                    let user_prefix = match *specialization {
+                        StructSpecialization::Struct => USER_VARIABLE_PREFIX,
+                        StructSpecialization::InterfaceBlock => USER_BLOCK_PREFIX,
+                    };
+                    let name = Self::name_str(name, TEMP_STRUCT_PREFIX, user_prefix, id.id);
                     let declaration_text = format!(
                         "{} {{\n{}}}",
-                        &name,
+                        name,
                         fields
                             .iter()
                             .enumerate()
@@ -667,6 +684,7 @@ impl ast::Target for Generator {
                                     &field.name,
                                     field.type_id,
                                     field.precision,
+                                    field.precise,
                                     &field.decorations,
                                     None,
                                     None,
@@ -681,7 +699,7 @@ impl ast::Target for Generator {
 
                     // Declare the struct for future use.
                     if *specialization == StructSpecialization::Struct {
-                        writeln!(self.type_declarations, "struct {};", &declaration_text).unwrap();
+                        writeln!(self.type_declarations, "struct {};", declaration_text).unwrap();
                     }
 
                     (
@@ -729,8 +747,8 @@ impl ast::Target for Generator {
             &ConstantValue::YuvCsc(yuv_csc) => Self::yuv_csc_standard_str(yuv_csc),
             ConstantValue::Composite(elements) => format!(
                 "{}{}({})",
-                &type_info.use_text_pre,
-                &type_info.use_text_post,
+                type_info.use_text_pre,
+                type_info.use_text_post,
                 elements
                     .iter()
                     .map(|element| self.constants[element].text.clone())
@@ -750,6 +768,7 @@ impl ast::Target for Generator {
             &variable.name,
             variable.type_id,
             variable.precision,
+            variable.precise,
             &variable.decorations,
             variable.built_in,
             variable.initializer,
@@ -781,16 +800,20 @@ impl ast::Target for Generator {
     }
 
     fn new_function(&mut self, _ir_meta: &IRMeta, id: FunctionId, function: &Function) {
-        let qualifiers =
-            Self::qualifiers_str(function.return_precision, &function.return_decorations);
+        let qualifiers = Self::qualifiers_str(
+            function.return_precision,
+            function.return_precise,
+            &function.return_decorations,
+        );
         let return_type = &self.types[&function.return_type_id];
-        let name = Self::name_str(&function.name, TEMP_FUNCTION_PREFIX, id.id);
+        let name =
+            Self::name_str(&function.name, TEMP_FUNCTION_PREFIX, USER_VARIABLE_PREFIX, id.id);
 
         let declaration_text = format!(
             "{qualifiers}{}{} {}({})",
-            &return_type.use_text_pre,
-            &return_type.use_text_post,
-            &name,
+            return_type.use_text_pre,
+            return_type.use_text_post,
+            name,
             function
                 .params
                 .iter()
@@ -798,7 +821,7 @@ impl ast::Target for Generator {
                     format!(
                         "{} {}",
                         Self::function_param_direction_str(param.direction),
-                        &self.variables[&param.variable_id].declaration_text
+                        self.variables[&param.variable_id].declaration_text
                     )
                 })
                 .collect::<Vec<_>>()
@@ -813,12 +836,10 @@ impl ast::Target for Generator {
 
     fn global_scope(&mut self, ir_meta: &IRMeta) {
         match ir_meta.get_shader_type() {
-            ShaderType::Vertex => {
-                if ir_meta.get_num_views() > 0 {
-                    // Note: not to be done if emulate_instanced_multiview is set
-                    writeln!(self.preamble, "layout(num_views = {}) in;", ir_meta.get_num_views())
-                        .unwrap();
-                }
+            ShaderType::Vertex if ir_meta.get_num_views() > 0 => {
+                // Note: not to be done if emulate_instanced_multiview is set
+                writeln!(self.preamble, "layout(num_views = {}) in;", ir_meta.get_num_views())
+                    .unwrap();
             }
             ShaderType::Fragment => {
                 if ir_meta.get_early_fragment_tests() {
@@ -856,16 +877,18 @@ impl ast::Target for Generator {
             &self.variables,
             &mut self.global_variables,
             ir_meta.all_global_variables(),
+            None,
         );
-
-        println!("{}", self.preamble);
-        println!("{}", self.type_declarations);
-        println!("{}", self.global_variables);
     }
 
-    fn begin_block(&mut self, _ir_meta: &IRMeta, variables: &[VariableId]) -> String {
+    fn begin_block(
+        &mut self,
+        _ir_meta: &IRMeta,
+        variables: &[VariableId],
+        for_loop_variable: Option<VariableId>,
+    ) -> String {
         let mut block = String::new();
-        Self::declare_variables(&self.variables, &mut block, variables);
+        Self::declare_variables(&self.variables, &mut block, variables, for_loop_variable);
         block
     }
 
@@ -880,7 +903,7 @@ impl ast::Target for Generator {
         id: TypedId,
         index: u32,
     ) {
-        let expr = format!("{}.{}", self.get_expression(id), Self::get_swizzle(index));
+        let expr = format!("{}.{}", self.get_expression(id), utils::get_swizzle(index));
         self.expressions.insert(result, expr);
     }
 
@@ -891,7 +914,7 @@ impl ast::Target for Generator {
         id: TypedId,
         indices: &[u32],
     ) {
-        let expr = format!("{}.{}", self.get_expression(id), Self::get_swizzle_multi(indices));
+        let expr = format!("{}.{}", self.get_expression(id), utils::get_swizzle_multi(indices));
         self.expressions.insert(result, expr);
     }
 
@@ -915,7 +938,11 @@ impl ast::Target for Generator {
         field: &Field,
     ) {
         let lhs = self.get_expression(id);
-        let field_name = Self::name_str(&field.name, TEMP_STRUCT_FIELD_PREFIX, index);
+        let field_name = if let Some(built_in) = field.built_in {
+            Self::field_built_in_str(built_in)
+        } else {
+            Self::name_str(&field.name, TEMP_STRUCT_FIELD_PREFIX, USER_VARIABLE_PREFIX, index)
+        };
         // Note: if selecting the field of a nameless interface block, just use the field.
         let expr = if lhs.is_empty() { field_name } else { format!("{}.{}", lhs, field_name) };
         self.expressions.insert(result, expr);
@@ -972,28 +999,29 @@ impl ast::Target for Generator {
         result: Option<RegisterId>,
         function_id: FunctionId,
         params: &[TypedId],
+        has_side_effect_with_unused_result: bool,
     ) {
         let statement = format!(
             "{}({})",
             self.functions[&function_id].name,
             params.iter().map(|&id| self.get_expression(id).clone()).collect::<Vec<_>>().join(", ")
         );
-        match result {
-            Some(result) => {
-                self.expressions.insert(result, statement);
-            }
-            None => {
-                writeln!(block_result, "{statement};").unwrap();
-            }
-        };
+        if let Some(result) = result
+            && !has_side_effect_with_unused_result
+        {
+            self.expressions.insert(result, statement);
+        } else {
+            writeln!(block_result, "{statement};").unwrap();
+        }
     }
 
     fn unary(
         &mut self,
-        _block_result: &mut String,
+        block_result: &mut String,
         result: RegisterId,
         unary_op: UnaryOpCode,
         id: TypedId,
+        has_side_effect_with_unused_result: bool,
     ) {
         let id = self.get_expression(id);
         let expr = match unary_op {
@@ -1073,16 +1101,21 @@ impl ast::Target for Generator {
                 panic!("Internal error: Unexpected non-GLSL opcode for GLSL generator")
             }
         };
-        self.expressions.insert(result, expr);
+        if has_side_effect_with_unused_result {
+            writeln!(block_result, "{expr};").unwrap();
+        } else {
+            self.expressions.insert(result, expr);
+        }
     }
 
     fn binary(
         &mut self,
-        _block_result: &mut String,
+        block_result: &mut String,
         result: RegisterId,
         binary_op: BinaryOpCode,
         lhs: TypedId,
         rhs: TypedId,
+        has_side_effect_with_unused_result: bool,
     ) {
         let lhs = self.get_expression(lhs);
         let rhs = self.get_expression(rhs);
@@ -1142,7 +1175,11 @@ impl ast::Target for Generator {
         };
         let expr =
             if call { format!("{op}({lhs}, {rhs})") } else { format!("({lhs}) {op} ({rhs})") };
-        self.expressions.insert(result, expr);
+        if has_side_effect_with_unused_result {
+            writeln!(block_result, "{expr};").unwrap();
+        } else {
+            self.expressions.insert(result, expr);
+        }
     }
 
     fn built_in(
@@ -1151,6 +1188,7 @@ impl ast::Target for Generator {
         result: Option<RegisterId>,
         built_in_op: BuiltInOpCode,
         args: &[TypedId],
+        has_side_effect_with_unused_result: bool,
     ) {
         let built_in = match built_in_op {
             BuiltInOpCode::Clamp => "clamp",
@@ -1207,7 +1245,9 @@ impl ast::Target for Generator {
             }
         };
         let expr = format!("{built_in}({})", self.get_expressions(&mut args.iter()));
-        if let Some(result) = result {
+        if let Some(result) = result
+            && !has_side_effect_with_unused_result
+        {
             self.expressions.insert(result, expr);
         } else {
             writeln!(block_result, "{expr};").unwrap();
@@ -1453,6 +1493,56 @@ impl ast::Target for Generator {
         // instead of before.
         writeln!(block, "for (;;) {{\n{}}}", Self::indent_block(body_block.unwrap(), 1)).unwrap();
     }
+    fn branch_for_loop(
+        &mut self,
+        block: &mut String,
+        info: &util::TrivialLoopInfo,
+        body_block: Option<String>,
+    ) {
+        // The condition, continue and body blocks should always be present.  Condition and
+        // continue blocks are not usable because they are not generated in a form that is
+        // compatible with a `for` loop.  Instead, the loop info is used to reconstruct the `for`
+        // loop.
+        let continue_expr = if let Some(increment_step) = info.increment_step {
+            let increment_step = self.get_constant_expression(increment_step);
+            format!(
+                "{} {}= {}",
+                self.variables[&info.loop_variable].name,
+                if info.ascending { '+' } else { '-' },
+                increment_step
+            )
+        } else {
+            format!(
+                "{}{}",
+                self.variables[&info.loop_variable].name,
+                if info.ascending { "++" } else { "--" }
+            )
+        };
+        let condition_op = match info.condition_op {
+            BinaryOpCode::Equal => "==",
+            BinaryOpCode::NotEqual => "!=",
+            BinaryOpCode::LessThan => "<",
+            BinaryOpCode::GreaterThan => ">",
+            BinaryOpCode::LessThanEqual => "<=",
+            BinaryOpCode::GreaterThanEqual => ">=",
+            _ => panic!("Internal error: Invalid for loop condition operator"),
+        };
+        let condition_comparator = self.get_constant_expression(info.condition_comparator);
+        let condition = format!(
+            "{} {} {}",
+            self.variables[&info.loop_variable].name, condition_op, condition_comparator
+        );
+
+        writeln!(
+            block,
+            "for ({}; {}; {}) {{\n{}}}",
+            self.variables[&info.loop_variable].declaration_text,
+            condition,
+            continue_expr,
+            Self::indent_block(body_block.unwrap(), 1)
+        )
+        .unwrap();
+    }
     fn branch_loop_if(&mut self, block: &mut String, condition: TypedId) {
         // The condition block of a loop ends in `if (!condition) break;`
         writeln!(block, "if (!({}))\n  break;", self.get_expression(condition)).unwrap();
@@ -1493,5 +1583,19 @@ impl ast::Target for Generator {
             Self::indent_block(block_result, 1),
         )
         .unwrap();
+    }
+}
+
+pub fn generate(ir: &mut IR, options: &compile::Options) {
+    {
+        let transform_options = transform::monomorphize_unsupported_functions::Options {
+            struct_containing_samplers: false,
+            image: options.shader_version >= 310,
+            atomic_counter: false,
+            array_of_array_of_sampler_or_image: false,
+            // Already done by common code.
+            pixel_local_storage: false,
+        };
+        transform::run!(monomorphize_unsupported_functions, ir, &transform_options);
     }
 }

@@ -95,8 +95,7 @@ enum TBasicType
     EbtUSampler2DRect,
     EbtUSamplerBuffer,
     EbtUSamplerCubeArray,
-    EbtSamplerVideoWEBGL,
-    EbtGuardSamplerEnd = EbtSamplerVideoWEBGL,  // non type: see implementation of IsSampler()
+    EbtGuardSamplerEnd = EbtUSamplerCubeArray,  // non type: see implementation of IsSampler()
 
     // images
     EbtGuardImageBegin,
@@ -261,7 +260,6 @@ inline bool IsIntegerSampler(TBasicType type)
         case EbtSamplerBuffer:
         case EbtSamplerCubeArray:
         case EbtSamplerCubeArrayShadow:
-        case EbtSamplerVideoWEBGL:
             return false;
         default:
             ASSERT(!IsSampler(type));
@@ -406,7 +404,6 @@ inline bool IsSampler2D(TBasicType type)
         case EbtSampler2DMS:
         case EbtISampler2DMS:
         case EbtUSampler2DMS:
-        case EbtSamplerVideoWEBGL:
             return true;
         case EbtSampler2DArray:
         case EbtISampler2DArray:
@@ -475,7 +472,6 @@ inline bool IsSamplerCube(TBasicType type)
         case EbtUSampler2DRect:
         case EbtUSamplerBuffer:
         case EbtUSamplerCubeArray:
-        case EbtSamplerVideoWEBGL:
             return false;
         default:
             ASSERT(!IsSampler(type));
@@ -522,7 +518,6 @@ inline bool IsSampler3D(TBasicType type)
         case EbtUSampler2DRect:
         case EbtUSamplerBuffer:
         case EbtUSamplerCubeArray:
-        case EbtSamplerVideoWEBGL:
             return false;
         default:
             ASSERT(!IsSampler(type));
@@ -569,7 +564,6 @@ inline bool IsSamplerArray(TBasicType type)
         case EbtISamplerBuffer:
         case EbtUSampler2DRect:
         case EbtUSamplerBuffer:
-        case EbtSamplerVideoWEBGL:
             return false;
         default:
             ASSERT(!IsSampler(type));
@@ -602,7 +596,6 @@ inline bool IsSampler2DArray(TBasicType type)
         case EbtSampler2DMS:
         case EbtISampler2DMS:
         case EbtUSampler2DMS:
-        case EbtSamplerVideoWEBGL:
         case EbtSampler3D:
         case EbtISampler3D:
         case EbtUSampler3D:
@@ -676,7 +669,6 @@ inline bool IsShadowSampler(TBasicType type)
         case EbtUSampler2DRect:
         case EbtUSamplerBuffer:
         case EbtUSamplerCubeArray:
-        case EbtSamplerVideoWEBGL:
             return false;
         default:
             ASSERT(!IsSampler(type));
@@ -1016,9 +1008,6 @@ enum TQualifier
     // constant_id.
     EvqSpecConst,
 
-    // __pixel_localEXT from EXT_shader_pixel_local_storage.
-    EvqPixelLocalEXT,
-
     // end of list
     EvqLast
 };
@@ -1026,6 +1015,24 @@ enum TQualifier
 inline bool IsQualifierUnspecified(TQualifier qualifier)
 {
     return (qualifier == EvqTemporary || qualifier == EvqGlobal);
+}
+
+inline bool IsPrivate(TQualifier qualifier)
+{
+    switch (qualifier)
+    {
+        case EvqTemporary:
+        case EvqGlobal:
+        case EvqConst:
+        case EvqParamIn:
+        case EvqParamOut:
+        case EvqParamInOut:
+        case EvqParamConst:
+            // Every other qualifier denotes a shader interface variable
+            return true;
+        default:
+            return false;
+    }
 }
 
 inline bool IsStorageBuffer(TQualifier qualifier)
@@ -1543,7 +1550,6 @@ inline const char *getQualifierString(TQualifier q)
     case EvqTessEvaluationOut:         return "out";
     case EvqTessCoord:                 return "TessCoord";
     case EvqSpecConst:                 return "const";
-    case EvqPixelLocalEXT:             return "__pixel_localEXT";
     default: UNREACHABLE();            return "unknown qualifier";
     }
     // clang-format on

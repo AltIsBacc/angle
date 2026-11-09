@@ -10,6 +10,7 @@
 #include <list>
 #include <map>
 #include <stack>
+#include <string>
 
 #include "angle_gl.h"
 #include "compiler/translator/Compiler.h"
@@ -18,10 +19,9 @@
 #include "compiler/translator/hlsl/ASTMetadataHLSL.h"
 #include "compiler/translator/tree_util/IntermTraverse.h"
 
-class BuiltInFunctionEmulator;
-
 namespace sh
 {
+class BuiltInFunctionEmulator;
 class ImageFunctionHLSL;
 class ResourcesHLSL;
 class StructureHLSL;
@@ -41,6 +41,7 @@ struct TReferencedBlock : angle::NonCopyable
 // Maps from uniqueId to a variable.
 using ReferencedVariables = std::map<int, const TVariable *>;
 using ReferencedInterfaceBlocks = std::map<int, const TReferencedBlock *>;
+using ExtractedSamplerNameMap   = std::map<const TVariable *, std::string>;
 
 class OutputHLSL : public TIntermTraverser
 {
@@ -54,6 +55,7 @@ class OutputHLSL : public TIntermTraverser
                int numRenderTargets,
                int maxDualSourceDrawBuffers,
                const std::vector<ShaderVariable> &uniforms,
+               const ExtractedSamplerNameMap &extractedSamplerNames,
                const ShCompileOptions &compileOptions,
                TSymbolTable *symbolTable,
                PerformanceDiagnostics *perfDiagnostics,
@@ -113,8 +115,6 @@ class OutputHLSL : public TIntermTraverser
     bool visitDeclaration(Visit visit, TIntermDeclaration *node) override;
     bool visitLoop(Visit visit, TIntermLoop *) override;
     bool visitBranch(Visit visit, TIntermBranch *) override;
-
-    bool handleExcessiveLoop(TInfoSinkBase &out, TIntermLoop *node);
 
     // Emit one of three strings depending on traverse phase. Called with literal strings so using
     // const char* instead of TString.
@@ -237,8 +237,6 @@ class OutputHLSL : public TIntermTraverser
     bool mInsideDiscontinuousLoop;
     int mNestedLoopDepth;
 
-    TIntermSymbol *mExcessiveLoopIndex;
-
     TString structInitializerString(int indent, const TType &type, const TString &name) const;
 
     struct HelperFunction
@@ -285,8 +283,6 @@ class OutputHLSL : public TIntermTraverser
 
   private:
     TString generateStructMapping(const std::vector<MappedStruct> &std140Structs) const;
-    ImmutableString samplerNamePrefixFromStruct(TIntermTyped *node);
-    bool ancestorEvaluatesToSamplerInStruct();
     // We need to do struct mapping when pass the struct to a function or copy the struct via
     // assignment.
     bool needStructMapping(TIntermTyped *node);

@@ -7,17 +7,17 @@
 //    Implements the class methods for DisplayVkAndroid.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/vulkan/android/DisplayVkAndroid.h"
 
 #include <android/log.h>
 #include <android/native_window.h>
 #include <vulkan/vulkan.h>
+#include <cinttypes>
 
+#include "common/android_util.h"
 #include "common/angle_version_info.h"
+#include "common/string_utils.h"
+#include "common/unsafe_buffers.h"
 #include "libANGLE/renderer/driver_utils.h"
 #include "libANGLE/renderer/vulkan/android/HardwareBufferImageSiblingVkAndroid.h"
 #include "libANGLE/renderer/vulkan/android/WindowSurfaceVkAndroid.h"
@@ -26,6 +26,75 @@
 
 namespace rx
 {
+
+namespace
+{
+void CheckAndroidBlobcacheLimits()
+{
+    // Check whether the correct blobcache mode and limits are set
+
+    // https://android.googlesource.com/platform/frameworks/native/+/android16-release/opengl/libs/EGL/egl_cache.cpp#237
+    const AndroidBlobCacheProperties blobCacheProperties = GetAndroidBlobCacheProperties();
+    if (!blobCacheProperties.isMultifileEnabled())
+    {
+        __android_log_print(ANDROID_LOG_INFO, "ANGLE",
+                            "GL performance: HIGH: EGL blobcache multifile is not enabled.");
+
+        // None of the other checks matter if not enabled
+        return;
+    }
+
+    // Check the Android version to determine recommended size
+    std::string androidVersionReleaseStr;
+    int64_t androidVersionRelease = 0;
+
+    // Starting with Android 17, we've bumped up recommended to 128 MB
+    int64_t recommendedBlobcacheSize = 128 * 1024 * 1024;
+    if (angle::android::GetSystemProperty("ro.build.version.release", &androidVersionReleaseStr) &&
+        angle::StringToInt64(androidVersionReleaseStr, &androidVersionRelease) &&
+        androidVersionRelease < 17)
+    {
+        recommendedBlobcacheSize = 32 * 1024 * 1024;
+    }
+
+    // Then check the read-only property
+    // https://android.googlesource.com/platform/frameworks/native/+/android16-release/opengl/libs/EGL/egl_cache.cpp#254
+    if (blobCacheProperties.multifileLimit)
+    {
+        // The value is set, check against recommendation
+        const int64_t roBlobcacheMultifileLimit = *blobCacheProperties.multifileLimit;
+        if (roBlobcacheMultifileLimit < recommendedBlobcacheSize)
+        {
+            __android_log_print(ANDROID_LOG_INFO, "ANGLE",
+                                "GL performance: HIGH: EGL blobcache multifile size (%" PRId64
+                                ") is smaller than the recommended size (%" PRId64 ").",
+                                roBlobcacheMultifileLimit, recommendedBlobcacheSize);
+        }
+    }
+    else
+    {
+        // The value is not set at all
+        __android_log_print(
+            ANDROID_LOG_INFO, "ANGLE",
+            "GL performance: HIGH: EGL blobcache multifile size is not configured.");
+    }
+
+    // Check the debug limit, which overrides read-only
+    // https://android.googlesource.com/platform/frameworks/native/+/android16-release/opengl/libs/EGL/egl_cache.cpp#258
+    if (blobCacheProperties.debugMultifileLimit)
+    {
+        // The debug value is set, check it against recommendations too
+        const int64_t debugBlobcacheMultifileLimit = *blobCacheProperties.debugMultifileLimit;
+        if (debugBlobcacheMultifileLimit < recommendedBlobcacheSize)
+        {
+            __android_log_print(ANDROID_LOG_INFO, "ANGLE",
+                                "GL performance: HIGH: EGL blobcache multifile debug size (%" PRId64
+                                ") is smaller than the recommended size (%" PRId64 ").",
+                                debugBlobcacheMultifileLimit, recommendedBlobcacheSize);
+        }
+    }
+}
+}  // namespace
 
 DisplayVkAndroid::DisplayVkAndroid(const egl::DisplayState &state) : DisplayVk(state) {}
 
@@ -37,6 +106,9 @@ egl::Error DisplayVkAndroid::initialize(egl::Display *display)
     strstr << "Version (" << angle::GetANGLEVersionString() << "), ";
     strstr << "Renderer (" << mRenderer->getRendererDescription() << ")";
     __android_log_print(ANDROID_LOG_INFO, "ANGLE", "%s", strstr.str().c_str());
+
+    // Print some warnings if blobcache limits are inadequate
+    CheckAndroidBlobcacheLimits();
 
     return egl::NoError();
 }
@@ -100,7 +172,8 @@ egl::ConfigSet DisplayVkAndroid::generateConfigs()
 
     std::vector<GLenum> depthStencilFormats(
         egl_vk::kConfigDepthStencilFormats,
-        egl_vk::kConfigDepthStencilFormats + ArraySize(egl_vk::kConfigDepthStencilFormats));
+        ANGLE_UNSAFE_TODO(egl_vk::kConfigDepthStencilFormats +
+                          ArraySize(egl_vk::kConfigDepthStencilFormats)));
 
     if (getCaps().stencil8)
     {

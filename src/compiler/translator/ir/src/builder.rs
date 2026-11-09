@@ -62,6 +62,44 @@ impl IntermediateBlock {
     }
 }
 
+// Information needed to constant-fold switch statements
+#[cfg_attr(debug_assertions, derive(Debug))]
+struct ConstantSwitchInfo {
+    // Whether the current target of `break` is a `switch` (possibly nested under another switch)
+    // with a constant expression.  In particular, this switch would have to specially handle
+    // `continue` (see comments below).
+    is_constant_switch: bool,
+    // If the current constant-switch has had a `continue` branch, a variable is declared before
+    // the switch and set to true at the point of `continue`, and the branch is changed to
+    // `break`.  An `if (flag) continue;` statement is added after the (replaced) switch.
+    continue_variable: Option<(VariableId, TypedId)>,
+}
+
+impl ConstantSwitchInfo {
+    fn new() -> ConstantSwitchInfo {
+        ConstantSwitchInfo { is_constant_switch: false, continue_variable: None }
+    }
+
+    fn get_continue_variable(&mut self, ir_meta: &mut IRMeta) -> TypedId {
+        if let Some(continue_variable) = self.continue_variable {
+            continue_variable.1
+        } else {
+            let variable = ir_meta.declare_variable(
+                Name::new_temp("continue_flag"),
+                TYPE_ID_BOOL,
+                Precision::NotApplicable,
+                false,
+                Decorations::new_none(),
+                None,
+                Some(CONSTANT_ID_FALSE),
+                VariableScope::Local,
+            );
+            self.continue_variable = Some(variable);
+            variable.1
+        }
+    }
+}
+
 // Helper to construct the CFG of a function.
 #[cfg_attr(debug_assertions, derive(Debug))]
 struct CFGBuilder {
@@ -75,16 +113,24 @@ struct CFGBuilder {
     // The blocks of the CFG that is being built.  Once a function is complete, this stack
     // should be empty.
     interm_blocks: Vec<IntermediateBlock>,
+    // A stack of nested switch / loop info used for folding switch statements with a constant
+    // selector.
+    constant_switch_stack: Vec<ConstantSwitchInfo>,
 }
 
 impl CFGBuilder {
     fn new() -> CFGBuilder {
-        CFGBuilder { current_block: IntermediateBlock::new(), interm_blocks: Vec::new() }
+        CFGBuilder {
+            current_block: IntermediateBlock::new(),
+            interm_blocks: Vec::new(),
+            constant_switch_stack: Vec::new(),
+        }
     }
 
     fn clear(&mut self) {
         let _ = std::mem::replace(&mut self.current_block, IntermediateBlock::new());
         self.interm_blocks.clear();
+        self.constant_switch_stack.clear();
     }
 
     fn is_empty(&self) -> bool {
@@ -167,20 +213,43 @@ impl CFGBuilder {
     fn add_variable_declaration(&mut self, variable_id: VariableId) {
         if !self.current_block.new_instructions_are_dead_code {
             self.current_block.block.add_variable_declaration(variable_id);
+        } else {
+            // GLSL supports declaring a variable in one case and using it in the next, even if the
+            // declaration is in dead code!  To support this, the variable declaration is added to
+            // the block anyway if inside a switch case.
+            let mut non_merge_blocks =
+                self.interm_blocks.iter().rev().filter(|&block| !block.is_merge_block);
+            // If this is the first block of the first `case`, the parent would be the `switch`.
+            let parent_is_switch = matches!(
+                non_merge_blocks.next().unwrap().block.get_terminating_op(),
+                OpCode::Switch(..)
+            );
+            // Otherwise the grandparent is the `switch`.
+            let grandparent = non_merge_blocks.next();
+            let grandparent_is_switch = grandparent
+                .map(|block| matches!(block.block.get_terminating_op(), OpCode::Switch(..)))
+                .unwrap_or(false);
+            if parent_is_switch || grandparent_is_switch {
+                self.current_block.block.add_variable_declaration(variable_id);
+            }
         }
     }
 
     // Add an instruction to the current block.  This may be a break, continue, return or discard,
     // in which case the block terminates early.  If another instruction is added after the block
     // is terminated, it is dropped as dead-code.
-    fn add_void_instruction(&mut self, op: OpCode) {
+    fn add_void_instruction(&mut self, ir_meta: &mut IRMeta, op: OpCode) {
         if !self.current_block.new_instructions_are_dead_code {
             if matches!(op, OpCode::Discard | OpCode::Return(_) | OpCode::Break | OpCode::Continue)
             {
                 self.current_block.new_instructions_are_dead_code = true;
             }
 
-            self.current_block.block.add_void_instruction(op);
+            // If `continue` is observed under a switch with a constant selector, it's replaced with
+            // a `break` after setting a flag (to `continue` after the `switch`).
+            if !matches!(op, OpCode::Continue) || !self.constant_switch_nested_continue(ir_meta) {
+                self.current_block.block.add_void_instruction(op);
+            }
         }
     }
     fn add_typed_instruction(&mut self, id: RegisterId) {
@@ -270,7 +339,8 @@ impl CFGBuilder {
 
         // If the condition of the if is a constant, it can be constant-folded.
         let mut if_block = self.interm_blocks.pop().unwrap();
-        let if_condition = if_block.block.get_terminating_op().get_if_condition().id.get_constant();
+        let if_condition =
+            if_block.block.get_terminating_op().get_if_condition().id.get_if_constant();
 
         match if_condition {
             Some(condition) => {
@@ -359,6 +429,8 @@ impl CFGBuilder {
             self.current_block.block.terminate(OpCode::Loop);
         }
         self.push_block();
+
+        self.constant_switch_stack.push(ConstantSwitchInfo::new());
     }
 
     fn end_loop_condition_common(&mut self, condition: TypedId) {
@@ -406,6 +478,8 @@ impl CFGBuilder {
             self.current_block.block.terminate(OpCode::Continue);
         }
 
+        self.constant_switch_stack.pop();
+
         // Retrieve and set the body block of the loop.  The header of the loop is already at the
         // top of the stack.  Prepare a merge block to continue what comes after the loop.
         //
@@ -430,7 +504,7 @@ impl CFGBuilder {
             .get_merge_chain_terminating_op()
             .get_loop_condition()
             .id
-            .get_constant();
+            .get_if_constant();
 
         match loop_condition {
             Some(condition) if condition == CONSTANT_ID_FALSE => {
@@ -462,6 +536,8 @@ impl CFGBuilder {
             self.current_block.block.terminate(OpCode::DoLoop);
         }
         self.push_block();
+
+        self.constant_switch_stack.push(ConstantSwitchInfo::new());
     }
 
     fn begin_do_loop_condition(&mut self) {
@@ -484,6 +560,8 @@ impl CFGBuilder {
     fn end_do_loop(&mut self, condition: TypedId) {
         self.end_loop_condition_common(condition);
 
+        self.constant_switch_stack.pop();
+
         // Prepare a merge block to continue what comes after the do-loop.  If the entire do-loop
         // was dead-code eliminated however, restore the previous (already terminated) block.
         if self.are_new_instructions_dead_code_in_parent_block() {
@@ -502,6 +580,15 @@ impl CFGBuilder {
             self.current_block.block.terminate(OpCode::Switch(value, Vec::new()));
         }
         self.push_block();
+
+        let mut switch_info = ConstantSwitchInfo::new();
+        switch_info.is_constant_switch = value.id.is_constant()
+            || self
+                .constant_switch_stack
+                .last()
+                .map(|info| info.is_constant_switch)
+                .unwrap_or(false);
+        self.constant_switch_stack.push(switch_info);
     }
 
     fn is_empty_switch_block(block: &Block) -> bool {
@@ -540,7 +627,11 @@ impl CFGBuilder {
                     // To support this, pull the variable declaration to the parent scope so it's
                     // not declared only in one case block.
                     let switch_block = &mut self.interm_blocks.last_mut().unwrap().block;
-                    switch_block.variables.append(&mut std::mem::take(&mut case_block.variables));
+                    let mut case_block_iter = Some(&mut case_block);
+                    while let Some(block) = case_block_iter {
+                        switch_block.variables.append(&mut std::mem::take(&mut block.variables));
+                        case_block_iter = block.merge_block.as_mut().map(|block| block.as_mut());
+                    }
                     switch_block.add_switch_case_block(case_block);
                 }
             }
@@ -563,7 +654,7 @@ impl CFGBuilder {
     }
 
     fn begin_case(&mut self, value: TypedId) {
-        self.begin_case_impl(value.id.get_constant());
+        self.begin_case_impl(value.id.get_if_constant());
     }
 
     fn begin_default(&mut self) {
@@ -583,7 +674,7 @@ impl CFGBuilder {
 
         // If the expression is constant, but no matching cases (or default) exists, the switch is
         // a no-op.
-        if let Some(switch_expr) = switch_expr.id.get_constant() {
+        if let Some(switch_expr) = switch_expr.id.get_if_constant() {
             // First check if there's an exact match
             let any_exact = switch_cases
                 .iter()
@@ -600,9 +691,11 @@ impl CFGBuilder {
         (true, None)
     }
 
-    fn end_switch(&mut self) {
+    fn end_switch(&mut self, ir_meta: &mut IRMeta) {
         // Terminate the last case, if not already.
         self.end_previous_case();
+
+        let constant_switch_info = self.constant_switch_stack.pop().unwrap();
 
         // The case blocks have already been processed.  The header of the switch is already at the
         // top of the stack.  Prepare a merge block to continue what comes after the switch.
@@ -634,9 +727,12 @@ impl CFGBuilder {
         // - The switch has a constant expression, but none of the cases match it: In this case, the
         //   switch can be removed as well.
         // - The switch has a constant expression with a matching case: In this case, the
-        //   non-matching cases (that also cannot be fallen-through) can be removed.  Note that
-        //   sometimes the entire switch can be replaced with the matching blocks, but it can get
-        //   tricky with break and continue in it.
+        //   non-matching cases (that also cannot be fallen-through) can be removed.  The blocks in
+        //   the matching cases are placed under an infinite loop, which is broken out of with the
+        //   `break` instructions. Note that `continue` instructions are already turned into `break`
+        //   instructions, in which case a "continue variable" is declared and needs to be added to
+        //   the parent block. After the block, an `if (continue_variable) continue` statement
+        //   should be added.
 
         let (has_matching_case, matching_block_index) =
             Self::switch_has_matching_case(&mut switch_block.block);
@@ -648,50 +744,145 @@ impl CFGBuilder {
         } else {
             // If the switch expression is constant, remove the case blocks that cannot be executed
             if let Some(matching_block_index) = matching_block_index {
-                let case_blocks = std::mem::take(&mut switch_block.block.case_blocks);
+                self.constant_switch_prune(switch_block, matching_block_index)
+            } else {
+                // The switch block has to remain (whether constant and folded or not), push it back
+                // and make the current block a merge block.
+                self.interm_blocks.push(switch_block);
+            }
+            self.constant_switch_declare_continue_variable(ir_meta, constant_switch_info);
+            self.current_block.is_merge_block = true;
+        }
+    }
 
-                // Starting from the matching block, take blocks while their terminator is
-                // `Passthrough` and then the final block with a different terminator.  Note that
-                // take_while stops _after_ the first element that doesn't match the predicate,
-                // i.e. that element is lost.  Because of that, the first element after
-                // `Passthrough` is also matched.
-                let mut iter = case_blocks.into_iter().skip(matching_block_index);
-                let mut matching_case_block = iter.next().unwrap();
-                let mut fallthrough_chain_last_block =
-                    matching_case_block.get_merge_chain_last_block_mut();
+    // Handle `continue` nested under a switch with a constant selector.  If `false` is returned,
+    // the instruction was not handled.
+    fn constant_switch_nested_continue(&mut self, ir_meta: &mut IRMeta) -> bool {
+        if let Some(info) = self.constant_switch_stack.last_mut()
+            && info.is_constant_switch
+        {
+            let continue_variable = info.get_continue_variable(ir_meta);
+            self.current_block
+                .block
+                .add_void_instruction(OpCode::Store(continue_variable, TYPED_CONSTANT_ID_TRUE));
+            self.current_block.block.add_void_instruction(OpCode::Break);
+            return true;
+        }
+        return false;
+    }
 
-                for fallthrough_block in iter {
-                    // If the previous block was fallthrough, chain this block to it. Otherwise
-                    // this block and all after it are unreachable.
-                    if !matches!(
-                        fallthrough_chain_last_block.get_terminating_op(),
-                        &OpCode::Passthrough
-                    ) {
-                        break;
-                    }
+    fn constant_switch_extract_matching_blocks(
+        switch_block: &mut IntermediateBlock,
+        matching_block_index: usize,
+    ) -> Block {
+        let case_blocks = std::mem::take(&mut switch_block.block.case_blocks);
 
-                    fallthrough_chain_last_block.unterminate();
-                    fallthrough_chain_last_block.terminate(OpCode::NextBlock);
-                    fallthrough_chain_last_block.set_merge_block(fallthrough_block);
-                    fallthrough_chain_last_block =
-                        fallthrough_chain_last_block.get_merge_chain_last_block_mut();
-                }
+        // Starting from the matching block, take blocks while their terminator is
+        // `Passthrough` and then the final block with a different terminator.  Note that
+        // take_while stops _after_ the first element that doesn't match the predicate,
+        // i.e. that element is lost.  Because of that, the first element after
+        // `Passthrough` is also matched.
+        let mut iter = case_blocks.into_iter().skip(matching_block_index);
+        let mut matching_case_block = iter.next().unwrap();
+        let mut fallthrough_chain_last_block = matching_case_block.get_merge_chain_last_block_mut();
 
-                let (switch_expression, switch_cases) =
-                    switch_block.block.get_terminating_op().get_switch_expression_and_cases();
-                let matching_case = switch_cases[matching_block_index];
-                // Replace the switch with one that has only one target, that is the matching case.
-                switch_block.block.unterminate();
-                switch_block
-                    .block
-                    .terminate(OpCode::Switch(switch_expression, vec![matching_case]));
-                switch_block.block.case_blocks = vec![matching_case_block];
+        for fallthrough_block in iter {
+            // If the previous block was fallthrough, chain this block to it. Otherwise
+            // this block and all after it are unreachable.
+            if !matches!(fallthrough_chain_last_block.get_terminating_op(), &OpCode::Passthrough) {
+                break;
             }
 
-            // The switch has to remain (whether constant or not), push it back and make the
-            // current block a merge block.
-            self.interm_blocks.push(switch_block);
-            self.current_block.is_merge_block = true;
+            fallthrough_chain_last_block.unterminate();
+            fallthrough_chain_last_block.terminate(OpCode::NextBlock);
+            fallthrough_chain_last_block.set_merge_block(fallthrough_block);
+            fallthrough_chain_last_block =
+                fallthrough_chain_last_block.get_merge_chain_last_block_mut();
+        }
+
+        matching_case_block
+    }
+
+    fn constant_switch_prune(
+        &mut self,
+        mut switch_block: IntermediateBlock,
+        matching_block_index: usize,
+    ) {
+        let matching_case_block =
+            Self::constant_switch_extract_matching_blocks(&mut switch_block, matching_block_index);
+
+        // Build the infinite loop with the matching_case_block as its body.
+        let mut condition_block = Block::new();
+        condition_block.terminate(OpCode::LoopIf(TYPED_CONSTANT_ID_TRUE));
+
+        let mut loop_block = Block::new();
+        loop_block.set_loop_condition_block(condition_block);
+        loop_block.set_loop_body_block(matching_case_block);
+        loop_block.terminate(OpCode::Loop);
+
+        // Instead of issuing a Switch, jump to the loop block directly.
+        switch_block.block.unterminate();
+        switch_block.block.terminate(OpCode::NextBlock);
+
+        self.interm_blocks.push(switch_block);
+
+        self.interm_blocks.push(IntermediateBlock {
+            block: loop_block,
+            is_merge_block: true,
+            new_instructions_are_dead_code: false,
+        });
+    }
+
+    fn constant_switch_declare_continue_variable(
+        &mut self,
+        ir_meta: &mut IRMeta,
+        constant_switch_info: ConstantSwitchInfo,
+    ) {
+        // If there's a continue variable, declare it in the loop block.  Also add
+        // `if (continue_variable) continue;` after the block.  Note that if nested under a switch
+        // with constant selector, this `continue` should be replaced with `break` too.
+        if let Some(continue_variable) = constant_switch_info.continue_variable {
+            self.interm_blocks.last_mut().unwrap().block.variables.push(continue_variable.0);
+
+            let mut if_body = Block::new();
+
+            if let Some(parent_info) = self.constant_switch_stack.last_mut()
+                && parent_info.is_constant_switch
+            {
+                // Generate:
+                //
+                //     Store parent_continue_variable true
+                //     Break
+                let parent_continue_variable = parent_info.get_continue_variable(ir_meta);
+                if_body.add_void_instruction(OpCode::Store(
+                    parent_continue_variable,
+                    TYPED_CONSTANT_ID_TRUE,
+                ));
+                if_body.terminate(OpCode::Break);
+            } else {
+                // Generate:
+                //
+                //     Continue
+                if_body.terminate(OpCode::Continue);
+            }
+
+            // Generate:
+            //
+            //     should_continue = Load continue_variable
+            //                       If should_continue
+            let mut if_block = Block::new();
+            let condition =
+                if_block.add_typed_instruction(instruction::load(ir_meta, continue_variable.1));
+
+            if_block.set_if_true_block(if_body);
+            if_block.terminate(OpCode::If(condition));
+
+            // Set the if block as the merge block of the loop so it runs after it.
+            self.interm_blocks.push(IntermediateBlock {
+                block: if_block,
+                is_merge_block: true,
+                new_instructions_are_dead_code: false,
+            });
         }
     }
 }
@@ -811,18 +1002,21 @@ impl Builder {
                 vec![],
                 TYPE_ID_VOID,
                 Precision::NotApplicable,
+                false,
                 Decorations::new_none(),
             );
-            let wrapped_main = self.ir.add_function(wrapped_main);
+            let wrapped_main = self.ir.meta.add_function(wrapped_main);
 
             // Move the body of `main` to `wrapped_main`.
-            self.ir.function_entries.swap(wrapped_main.id as usize, main_id.id as usize);
+            let main_body =
+                std::mem::take(&mut self.ir.function_entries[main_id.id as usize]).unwrap();
+            self.ir.set_function_entry(wrapped_main, main_body);
 
             // Set a new body for `main` that calls `wrapped_main`.
             let mut body = Block::new();
             body.add_void_instruction(OpCode::Call(wrapped_main, vec![]));
             body.terminate(OpCode::Return(None));
-            self.ir.function_entries[main_id.id as usize] = Some(body);
+            self.ir.set_function_entry(main_id, body);
         }
     }
 
@@ -911,6 +1105,7 @@ impl Builder {
         name: Name,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
         built_in: Option<BuiltIn>,
         scope: VariableScope,
@@ -933,7 +1128,7 @@ impl Builder {
         let variable_id = self
             .ir
             .meta
-            .declare_variable(name, type_id, precision, decorations, built_in, None, scope)
+            .declare_variable(name, type_id, precision, precise, decorations, built_in, None, scope)
             .0;
 
         // Add the variable to the list of local variables in this scope, if not global.  Function
@@ -956,6 +1151,7 @@ impl Builder {
         built_in: BuiltIn,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
     ) -> VariableId {
         // Note: the name of the built-in is not derived.  For text-based generators, the name can
@@ -967,6 +1163,7 @@ impl Builder {
             Name::new_exact(""),
             type_id,
             precision,
+            precise,
             decorations,
             Some(built_in),
             VariableScope::Global,
@@ -980,12 +1177,14 @@ impl Builder {
         name: &'static str,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
     ) -> VariableId {
         self.declare_variable(
             Name::new_interface(name),
             type_id,
             precision,
+            precise,
             decorations,
             None,
             VariableScope::Global,
@@ -999,6 +1198,7 @@ impl Builder {
         name: &'static str,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
     ) -> VariableId {
         let scope = if self.current_function.is_none() {
@@ -1007,12 +1207,35 @@ impl Builder {
             VariableScope::Local
         };
 
-        self.declare_variable(Name::new_temp(name), type_id, precision, decorations, None, scope)
+        self.declare_variable(
+            Name::new_temp(name),
+            type_id,
+            precision,
+            precise,
+            decorations,
+            None,
+            scope,
+        )
     }
 
     // Declare a const temporary variable.  The name of this variable is ultimately unused.
-    pub fn declare_const_variable(&mut self, type_id: TypeId, precision: Precision) -> VariableId {
-        self.ir.meta.declare_const_variable(Name::new_temp(""), type_id, precision)
+    pub fn declare_const_variable(
+        &mut self,
+        type_id: TypeId,
+        precision: Precision,
+        precise: bool,
+    ) -> VariableId {
+        self.ir.meta.declare_const_variable(Name::new_temp(""), type_id, precision, precise)
+    }
+
+    // Rescope a temporary variable to a `for` loop variable declared in its initializer
+    // expression.  This is nearly identically treated as a `Local` variable, except it's easier to
+    // identify its scope by the generators, since the variable declaration is otherwise moved to
+    // the block leading to the `for` loop.
+    pub fn rescope_as_for_loop_variable(&mut self, variable_id: VariableId) {
+        let variable = self.ir.meta.get_variable_mut(variable_id);
+        debug_assert!(variable.scope == VariableScope::Local);
+        variable.scope = VariableScope::ForLoopVariable;
     }
 
     // In GLSL, it's possible to mark a variable as invariant or precise in a separate line,
@@ -1022,7 +1245,10 @@ impl Builder {
         self.ir.meta.get_variable_mut(variable_id).decorations.add_invariant();
     }
     fn mark_variable_precise(&mut self, variable_id: VariableId) {
-        self.ir.meta.get_variable_mut(variable_id).decorations.add_precise();
+        self.ir.meta.get_variable_mut(variable_id).precise = true;
+    }
+    fn mark_texel_fetch_use(&mut self, variable_id: VariableId, fields: &[u32]) {
+        self.ir.meta.mark_texel_fetch_use(variable_id, fields);
     }
 
     // When a function prototype is encountered, the following functions are called:
@@ -1048,13 +1274,20 @@ impl Builder {
         params: Vec<FunctionParam>,
         return_type_id: TypeId,
         return_precision: Precision,
+        return_precise: bool,
         return_decorations: Decorations,
     ) -> FunctionId {
-        let function =
-            Function::new(name, params, return_type_id, return_precision, return_decorations);
+        let function = Function::new(
+            name,
+            params,
+            return_type_id,
+            return_precision,
+            return_precise,
+            return_decorations,
+        );
         let is_main = name == "main";
 
-        let id = self.ir.add_function(function);
+        let id = self.ir.meta.add_function(function);
 
         // If this is the main() function, remember its id.
         if is_main {
@@ -1094,6 +1327,7 @@ impl Builder {
         name: &'static str,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
         direction: FunctionParamDirection,
     ) -> VariableId {
@@ -1101,6 +1335,7 @@ impl Builder {
             Name::new_temp(name),
             type_id,
             precision,
+            precise,
             decorations,
             None,
             VariableScope::FunctionParam,
@@ -1145,11 +1380,17 @@ impl Builder {
     // Many instructions are generated either as part of a function or the initialization code for
     // global variables.  The following function should be used so that the generated code is
     // placed in the appropriate scope (function or global).
+    fn scope_and_ir_meta(&mut self) -> (&mut CFGBuilder, &mut IRMeta) {
+        (
+            match self.current_function {
+                Some(_) => &mut self.current_function_cfg,
+                None => &mut self.global_initializers_cfg,
+            },
+            &mut self.ir.meta,
+        )
+    }
     fn scope(&mut self) -> &mut CFGBuilder {
-        match self.current_function {
-            Some(_) => &mut self.current_function_cfg,
-            None => &mut self.global_initializers_cfg,
-        }
+        self.scope_and_ir_meta().0
     }
 
     // Used internally, loads an id from the top of the id stack.  If that is a pointer, its value
@@ -1196,7 +1437,8 @@ impl Builder {
         } else {
             self.ir.meta.on_variable_initialized(id);
             let id = TypedId::from_variable_id(&self.ir.meta, id);
-            self.scope().add_void_instruction(OpCode::Store(id, value));
+            let (scope, ir_meta) = self.scope_and_ir_meta();
+            scope.add_void_instruction(ir_meta, OpCode::Store(id, value));
         }
     }
 
@@ -1409,7 +1651,8 @@ impl Builder {
         self.scope().begin_default();
     }
     pub fn end_switch(&mut self) {
-        self.scope().end_switch();
+        let (scope, ir_meta) = self.scope_and_ir_meta();
+        scope.end_switch(ir_meta);
     }
 
     pub fn branch_discard(&mut self) {
@@ -1438,7 +1681,7 @@ impl Builder {
     // Called when a constant expression used as an array size is evaluated.  The result is found
     // on the stack, but is not used by an instruction; it's returned to the parser instead.
     pub fn pop_array_size(&mut self) -> u32 {
-        let size_id = self.interm_ids.pop().unwrap().id.get_constant().unwrap();
+        let size_id = self.interm_ids.pop().unwrap().id.get_constant();
         // Use get_index() because the expression may either be int or uint, both of which are
         // acceptable; get_index() returns a u32 for either case.
         self.ir.meta.get_constant(size_id).value.get_index()
@@ -1464,7 +1707,11 @@ impl Builder {
 
     // Called when constant scalar values are visited.
     fn push_constant(&mut self, id: ConstantId, type_id: TypeId) {
-        self.push_id(Id::new_constant(id), type_id, Precision::NotApplicable);
+        self.push_id(
+            Id::new_constant(id),
+            type_id,
+            util::unassigned_precision(&self.ir.meta, type_id),
+        );
     }
     pub fn push_constant_float(&mut self, value: f32) {
         let id = self.ir.meta.get_constant_float(value);
@@ -1525,7 +1772,10 @@ impl Builder {
             instruction::Result::Constant(id) => {
                 self.interm_ids.push(TypedId::from_typed_constant_id(id))
             }
-            instruction::Result::Void(op) => self.scope().add_void_instruction(op),
+            instruction::Result::Void(op) => {
+                let (scope, ir_meta) = self.scope_and_ir_meta();
+                scope.add_void_instruction(ir_meta, op)
+            }
             instruction::Result::Register(id) => {
                 self.scope().add_typed_instruction(id.id);
                 self.interm_ids.push(TypedId::from_register_id(id))
@@ -1616,6 +1866,22 @@ impl Builder {
     // The struct whose field is being selected is expected to be found at the top of the stack.
     pub fn struct_field(&mut self, field_index: u32) {
         let struct_id = self.interm_ids.pop().unwrap();
+        let is_nameless_variable = matches!(struct_id.id, Id::Variable(variable_id) if self.ir.meta.get_variable(variable_id).name.name.is_empty());
+        if is_nameless_variable {
+            let struct_type_info = self.ir.meta.get_type_mut(struct_id.type_id);
+            if let Type::Struct(name, fields, StructSpecialization::InterfaceBlock) =
+                struct_type_info
+                && name.name.is_empty()
+            {
+                // Mark the field as statically used during parse.  This is only needed for nameless
+                // interface blocks, because in that case the fields are separately reflected to the
+                // API.
+                //
+                // This _has_ to be done during parse because static use in dead code is still
+                // considered static use by GLSL.
+                fields[field_index as usize].is_static_use = true;
+            }
+        }
 
         let result = instruction::struct_field(&mut self.ir.meta, struct_id, field_index);
         self.add_instruction(result);
@@ -1638,6 +1904,7 @@ impl Builder {
                     self.interm_ids.push(TypedId::from_constant_id(
                         self.ir.meta.get_constant_uint(row),
                         TYPE_ID_UINT,
+                        Precision::Unassigned,
                     ));
                     self.index();
                     matrix_expanded_args.push(self.load());
@@ -1744,7 +2011,7 @@ impl Builder {
         // simplicity.
         let args = self.trim_constructor_args(type_id, args);
 
-        let result = instruction::construct(&mut self.ir.meta, type_id, args);
+        let result = instruction::construct(&mut self.ir.meta, type_id, args, None);
         self.add_instruction(result);
     }
 
@@ -1759,6 +2026,7 @@ impl Builder {
                 name,
                 TYPE_ID_INT,
                 Precision::Low,
+                false,
                 Decorations::new_none(),
                 None,
                 VariableScope::Global,
@@ -2802,7 +3070,6 @@ pub mod ffi {
         USampler2DRect,
         USamplerBuffer,
         USamplerCubeArray,
-        SamplerVideoWEBGL,
         Image2D,
         Image3D,
         Image2DArray,
@@ -2939,7 +3206,6 @@ pub mod ffi {
         TessEvaluationOut,
         TessCoord,
         SpecConst,
-        PixelLocalEXT,
     }
 
     #[derive(Copy, Clone)]
@@ -3156,8 +3422,10 @@ pub mod ffi {
             name: &'static str,
             ast_type: &ASTType,
         ) -> VariableId;
+        fn rescope_as_for_loop_variable(self: &mut BuilderWrapper, variable_id: VariableId);
         fn mark_variable_invariant(self: &mut BuilderWrapper, variable_id: VariableId);
         fn mark_variable_precise(self: &mut BuilderWrapper, variable_id: VariableId);
+        fn mark_texel_fetch_use(self: &mut BuilderWrapper, variable_id: VariableId, fields: &[u32]);
         fn new_function(
             self: &mut BuilderWrapper,
             name: &'static str,
@@ -3579,7 +3847,9 @@ fn builder_finish(mut builder: Box<BuilderWrapper>) -> Box<IR> {
 
     // Propagate precision to constant
     let mut ir = builder.builder.take_ir();
-    transform::propagate_precision::run(&mut ir);
+    transform::run!(propagate_precision, &mut ir);
+    #[cfg(debug_assertions)]
+    validator::validate_glsl_precision_rules(&ir, "propagate_precision");
 
     Box::new(ir)
 }
@@ -3644,7 +3914,6 @@ impl BuilderWrapper {
                         | ffi::ASTBasicType::SamplerBuffer
                         | ffi::ASTBasicType::SamplerCubeArray
                         | ffi::ASTBasicType::SamplerCubeArrayShadow
-                        | ffi::ASTBasicType::SamplerVideoWEBGL
                         | ffi::ASTBasicType::Image2D
                         | ffi::ASTBasicType::Image3D
                         | ffi::ASTBasicType::Image2DArray
@@ -3773,8 +4042,6 @@ impl BuilderWrapper {
                         | ffi::ASTBasicType::UImageBuffer
                 ) {
                     ImageDimension::Buffer
-                } else if matches!(basic_type, ffi::ASTBasicType::SamplerVideoWEBGL) {
-                    ImageDimension::Video
                 } else if matches!(
                     basic_type,
                     ffi::ASTBasicType::PixelLocalANGLE
@@ -3809,7 +4076,6 @@ impl BuilderWrapper {
                         | ffi::ASTBasicType::SamplerBuffer
                         | ffi::ASTBasicType::SamplerCubeArray
                         | ffi::ASTBasicType::SamplerCubeArrayShadow
-                        | ffi::ASTBasicType::SamplerVideoWEBGL
                         | ffi::ASTBasicType::ISampler2D
                         | ffi::ASTBasicType::ISampler3D
                         | ffi::ASTBasicType::ISamplerCube
@@ -3922,7 +4188,9 @@ impl BuilderWrapper {
             ffi::ASTQualifier::SampleMask => Some(BuiltIn::SampleMask),
             ffi::ASTQualifier::NumSamples => Some(BuiltIn::NumSamples),
             ffi::ASTQualifier::NumWorkGroups => Some(BuiltIn::NumWorkGroups),
-            ffi::ASTQualifier::WorkGroupSize => Some(BuiltIn::WorkGroupSize),
+            ffi::ASTQualifier::WorkGroupSize => {
+                panic!("Internal error: gl_WorkGroupSize should be constant folded")
+            }
             ffi::ASTQualifier::WorkGroupID => Some(BuiltIn::WorkGroupID),
             ffi::ASTQualifier::LocalInvocationID => Some(BuiltIn::LocalInvocationID),
             ffi::ASTQualifier::GlobalInvocationID => Some(BuiltIn::GlobalInvocationID),
@@ -3939,7 +4207,6 @@ impl BuilderWrapper {
             ffi::ASTQualifier::TessLevelInner => Some(BuiltIn::TessLevelInner),
             ffi::ASTQualifier::TessCoord => Some(BuiltIn::TessCoord),
             ffi::ASTQualifier::BoundingBox => Some(BuiltIn::BoundingBoxOES),
-            ffi::ASTQualifier::PixelLocalEXT => Some(BuiltIn::PixelLocalEXT),
             _ => None,
         }
     }
@@ -4070,15 +4337,11 @@ impl BuilderWrapper {
             }
             ffi::ASTQualifier::PatchIn => vec![Decoration::Input, Decoration::Patch],
 
-            ffi::ASTQualifier::PixelLocalEXT => unimplemented!(),
             _ => panic!("Internal error: Unexpected qualifier"),
         });
 
         if ast_type.invariant {
             decorations.decorations.push(Decoration::Invariant);
-        }
-        if ast_type.precise {
-            decorations.decorations.push(Decoration::Precise);
         }
         if ast_type.interpolant {
             decorations.decorations.push(Decoration::Interpolant);
@@ -4216,43 +4479,45 @@ impl BuilderWrapper {
     }
 
     fn get_struct_type_id(&mut self, struct_info: &ffi::ASTStruct) -> ffi::TypeId {
+        let is_internal = struct_info.is_internal;
+        let is_part_of_interface = !is_internal && struct_info.is_at_global_scope;
+
         let fields = struct_info
             .fields
             .iter()
             .map(|field| {
+                let built_in = Self::ast_type_built_in(&field.ast_type);
                 Field::new(
-                    if struct_info.is_internal {
-                        Name::new_exact(field.name)
+                    if built_in.is_some() {
+                        Name::new_exact("")
+                    } else if is_internal {
+                        Name::new_exact_struct_field(field.name)
+                    } else if is_part_of_interface {
+                        Name::new_interface(field.name)
                     } else {
                         Name::new_temp(field.name)
                     },
                     field.ast_type.type_id.into(),
                     field.ast_type.precision.into(),
+                    field.ast_type.precise,
                     Self::ast_type_decorations(&field.ast_type),
+                    built_in,
                 )
             })
             .collect::<Vec<_>>();
 
-        let (name, specialization) = if struct_info.is_interface_block {
-            (
-                if struct_info.is_internal {
-                    Name::new_exact(struct_info.name)
-                } else {
-                    Name::new_interface(struct_info.name)
-                },
-                StructSpecialization::InterfaceBlock,
-            )
+        let name = if is_internal {
+            Name::new_exact(struct_info.name)
+        } else if is_part_of_interface {
+            Name::new_interface(struct_info.name)
         } else {
-            (
-                if struct_info.is_internal {
-                    Name::new_exact(struct_info.name)
-                } else if struct_info.is_at_global_scope {
-                    Name::new_interface(struct_info.name)
-                } else {
-                    Name::new_temp(struct_info.name)
-                },
-                StructSpecialization::Struct,
-            )
+            Name::new_temp(struct_info.name)
+        };
+
+        let specialization = if struct_info.is_interface_block {
+            StructSpecialization::InterfaceBlock
+        } else {
+            StructSpecialization::Struct
         };
 
         self.builder.ir().meta.get_struct_type_id(name, fields, specialization).into()
@@ -4404,6 +4669,7 @@ impl BuilderWrapper {
                 built_in,
                 ast_type.type_id.into(),
                 ast_type.precision.into(),
+                ast_type.precise,
                 Self::ast_type_decorations(ast_type),
             );
 
@@ -4426,6 +4692,7 @@ impl BuilderWrapper {
                 name,
                 ast_type.type_id.into(),
                 ast_type.precision.into(),
+                ast_type.precise,
                 Self::ast_type_decorations(ast_type),
             )
         }
@@ -4438,16 +4705,25 @@ impl BuilderWrapper {
         ast_type: &ffi::ASTType,
     ) -> ffi::VariableId {
         if ast_type.qualifier == ffi::ASTQualifier::Const {
-            self.builder.declare_const_variable(ast_type.type_id.into(), ast_type.precision.into())
+            self.builder.declare_const_variable(
+                ast_type.type_id.into(),
+                ast_type.precision.into(),
+                ast_type.precise,
+            )
         } else {
             self.builder.declare_temp_variable(
                 name,
                 ast_type.type_id.into(),
                 ast_type.precision.into(),
+                ast_type.precise,
                 Self::ast_type_decorations(ast_type),
             )
         }
         .into()
+    }
+
+    fn rescope_as_for_loop_variable(&mut self, variable_id: ffi::VariableId) {
+        self.builder.rescope_as_for_loop_variable(variable_id.into());
     }
 
     fn mark_variable_invariant(&mut self, variable_id: ffi::VariableId) {
@@ -4456,6 +4732,10 @@ impl BuilderWrapper {
 
     fn mark_variable_precise(&mut self, variable_id: ffi::VariableId) {
         self.builder.mark_variable_precise(variable_id.into());
+    }
+
+    fn mark_texel_fetch_use(&mut self, variable_id: ffi::VariableId, fields: &[u32]) {
+        self.builder.mark_texel_fetch_use(variable_id.into(), fields);
     }
 
     fn function_param_direction(qualifier: ffi::ASTQualifier) -> FunctionParamDirection {
@@ -4491,6 +4771,7 @@ impl BuilderWrapper {
                 params,
                 return_type_id.into(),
                 return_ast_type.precision.into(),
+                return_ast_type.precise,
                 Self::ast_type_decorations(return_ast_type),
             )
             .into()
@@ -4520,6 +4801,7 @@ impl BuilderWrapper {
                 name,
                 type_id.into(),
                 ast_type.precision.into(),
+                ast_type.precise,
                 Self::ast_type_decorations(ast_type),
                 Self::function_param_direction(direction),
             )

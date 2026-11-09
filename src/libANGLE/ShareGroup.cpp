@@ -18,12 +18,26 @@
 #include "common/debug.h"
 #include "common/platform_helpers.h"
 #include "libANGLE/Context.h"
+#include "libANGLE/Display.h"
 #include "libANGLE/capture/FrameCapture.h"
 #include "libANGLE/renderer/DisplayImpl.h"
 #include "libANGLE/renderer/ShareGroupImpl.h"
 
 namespace egl
 {
+// ScopedContextRef
+ScopedContextRef::~ScopedContextRef()
+{
+    if (mContext != nullptr)
+    {
+        Error error = mDisplay->releaseContextRef(mContext);
+        if (error.isError())
+        {
+            ERR() << "Failed to destroy an unreferenced context: " << error;
+        }
+    }
+}
+
 // ShareGroupState
 ShareGroupState::ShareGroupState()
     : mAnyContextWithRobustness(false), mAnyContextWithDisplayTextureShareGroup(false)
@@ -32,7 +46,7 @@ ShareGroupState::~ShareGroupState() = default;
 
 void ShareGroupState::addSharedContext(gl::Context *context)
 {
-    mContexts.insert(std::pair(context->id().value, context));
+    mContexts.insert(context->id(), context);
 
     if (context->isRobustnessEnabled())
     {
@@ -46,7 +60,7 @@ void ShareGroupState::addSharedContext(gl::Context *context)
 
 void ShareGroupState::removeSharedContext(gl::Context *context)
 {
-    mContexts.erase(context->id().value);
+    mContexts.erase(context->id());
 }
 
 // ShareGroup
@@ -67,7 +81,7 @@ void ShareGroup::addRef()
     mRefCount++;
 }
 
-void ShareGroup::release(const Display *display)
+void ShareGroup::release(const ThreadSafeDisplay *display)
 {
     if (--mRefCount == 0)
     {
@@ -81,13 +95,12 @@ void ShareGroup::release(const Display *display)
 
 void ShareGroup::finishAllContexts()
 {
-    for (auto shareContext : mState.getContexts())
-    {
-        if (shareContext.second->hasBeenCurrent() && !shareContext.second->isDestroyed())
+    mState.getContexts().forEach([](gl::Context *shareContext) {
+        if (shareContext->hasBeenCurrent() && !shareContext->isDestroyed())
         {
-            shareContext.second->finish();
+            shareContext->finish();
         }
-    }
+    });
 }
 
 void ShareGroup::addSharedContext(gl::Context *context)
@@ -99,5 +112,28 @@ void ShareGroup::addSharedContext(gl::Context *context)
 void ShareGroup::removeSharedContext(gl::Context *context)
 {
     mState.removeSharedContext(context);
+}
+
+// ContextMap
+Error ContextMap::destroyAllInvalidContexts(ThreadSafeDisplay *display)
+{
+    std::vector<gl::Context *> invalidContexts;
+    {
+        std::lock_guard<angle::SimpleMutex> lock(mMutex);
+        invalidContexts = std::move(mInvalidContexts);
+    }
+
+    for (gl::Context *context : invalidContexts)
+    {
+        ASSERT(context->getRefCount() == 0);
+        // eglReleaseThread() may call to this method when there are still Contexts, that may
+        // potentially access shared state of the "context".
+        // Need AddRefLock because there may be ContextMutex destruction.
+        ScopedContextMutexAddRefLock lock(context->getContextMutex());
+        context->setIsDestroyed();
+        ANGLE_TRY(display->destroyContextImpl(context));
+    }
+
+    return NoError();
 }
 }  // namespace egl

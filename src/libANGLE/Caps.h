@@ -91,10 +91,8 @@ using ExtensionBool = bool Extensions::*;
 
 struct ExtensionInfo
 {
-    // If this extension can be enabled or disabled  with glRequestExtension
-    // (GL_ANGLE_request_extension)
+    // If this extension can be enabled with glRequestExtension from GL_ANGLE_request_extension
     bool Requestable = false;
-    bool Disablable  = false;
 
     // Pointer to a boolean member of the Extensions struct
     ExtensionBool ExtensionsMember = nullptr;
@@ -110,15 +108,6 @@ struct Limitations
 
     Limitations &operator=(const Limitations &other);
 
-    // Renderer doesn't support gl_FrontFacing in fragment shaders
-    bool noFrontFacingSupport = false;
-
-    // Renderer doesn't support GL_SAMPLE_ALPHA_TO_COVERAGE
-    bool noSampleAlphaToCoverageSupport = false;
-
-    // In glVertexAttribDivisorANGLE, attribute zero must have a zero divisor
-    bool attributeZeroRequiresZeroDivisorInEXT = false;
-
     // Unable to support different values for front and back faces for stencil refs and masks
     bool noSeparateStencilRefsAndMasks = false;
 
@@ -128,9 +117,6 @@ struct Limitations
 
     // Renderer always clamps constant blend color.
     bool noUnclampedBlendColor = false;
-
-    // D3D9 does not support flexible varying register packing.
-    bool noFlexibleVaryingPacking = false;
 
     // D3D does not support having multiple transform feedback outputs go to the same buffer.
     bool noDoubleBoundTransformFeedbackBuffers = false;
@@ -147,17 +133,15 @@ struct Limitations
     // http://anglebug.com/42266263
     bool noRasterOrderGroupWithoutAttachmentZero = false;
 
-    // PVRTC1 textures must be squares.
-    bool squarePvrtc1 = false;
+    // Some backends don't apply robust init when glCopyTexImage2D reads out of bounds of source
+    // framebuffer, whose read attachment is a different mip of the same texture being redefined.
+    bool noRobustInitOnOOBCopyTexImageSameTexture = false;
 
     // ETC1 texture support is emulated.
     bool emulatedEtc1 = false;
 
     // ASTC texture support is emulated.
     bool emulatedAstc = false;
-
-    // No compressed TEXTURE_3D support.
-    bool noCompressedTexture3D = false;
 
     // D3D does not support compressed textures where the base mip level is not a multiple of 4
     bool compressedBaseMipLevelMultipleOfFour = false;
@@ -172,6 +156,18 @@ struct Limitations
     // GL_ANGLE_base_vertex_base_instance is emulated and should only be exposed to WebGL. Emulated
     // by default in shared renderer code.
     bool baseInstanceBaseVertexEmulated = true;
+
+    // Size limit for buffers. GL_INVALID_OPERATION should be generated if trying to allocate a
+    // buffer larger than this limit.
+    size_t maxBufferBytes = std::numeric_limits<GLsizeiptr>::max();
+
+    // Maximum texture allocation size. Calculated by multiplying texture dimensions by
+    // bytes-per-pixel. 1.25Gb is chosen as a conservative limit to allow for backends to expand
+    // textures formats up to 3x and still stay within 32-bit sizes.
+    size_t maxTextureBytes = 1280 * 1024 * 1024;
+
+    // Workaround for PowerVR Rogue drivers that round up 3D texture dimensions to POT internally.
+    bool roundUp3DTextureSizeToPOTForLimit = false;
 };
 
 struct TypePrecision
@@ -725,6 +721,9 @@ struct DisplayExtensions
     // EGL_ANGLE_memory_usage_report
     bool memoryUsageReportANGLE = false;
 
+    // EGL_ANGLE_query_renderer_strings
+    bool queryRendererStringsANGLE = false;
+
     // EGL_EXT_surface_compression
     bool surfaceCompressionEXT = false;
 
@@ -747,9 +746,6 @@ struct DeviceExtensions
 
     // EGL_ANGLE_device_d3d
     bool deviceD3D = false;
-
-    // EGL_ANGLE_device_d3d9
-    bool deviceD3D9 = false;
 
     // EGL_ANGLE_device_d3d11
     bool deviceD3D11 = false;
@@ -829,11 +825,11 @@ struct ClientExtensions
     // EGL_ANGLE_platform_angle_metal
     bool platformANGLEMetal = false;
 
-    // EGL_ANGLE_platform_angle_device_context_volatile_cgl
-    bool platformANGLEDeviceContextVolatileCgl = false;
-
     // EGL_ANGLE_platform_angle_device_id
     bool platformANGLEDeviceId = false;
+
+    // EGL_ANGLE_platform_angle_display_key
+    bool platformANGLEDisplayKey = false;
 
     // EGL_ANGLE_device_creation
     bool deviceCreation = false;

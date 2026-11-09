@@ -323,7 +323,7 @@ angle::CallCapture CaptureGetShaderSource(const State &glState,
 angle::CallCapture CaptureGetShaderiv(const State &glState,
                                       bool isCallValid,
                                       ShaderProgramID shaderPacked,
-                                      GLenum pname,
+                                      ShaderParameter pnamePacked,
                                       GLint *params);
 angle::CallCapture CaptureGetString(const State &glState,
                                     bool isCallValid,
@@ -404,7 +404,7 @@ angle::CallCapture CaptureLinkProgram(const State &glState,
                                       ShaderProgramID programPacked);
 angle::CallCapture CapturePixelStorei(const State &glState,
                                       bool isCallValid,
-                                      GLenum pname,
+                                      PackUnpackParameter pnamePacked,
                                       GLint param);
 angle::CallCapture CapturePolygonOffset(const State &glState,
                                         bool isCallValid,
@@ -928,7 +928,7 @@ void CaptureGetShaderSource_source(const State &glState,
                                    angle::ParamCapture *paramCapture);
 void CaptureGetShaderiv_params(const State &glState,
                                ShaderProgramID shaderPacked,
-                               GLenum pname,
+                               ShaderParameter pnamePacked,
                                GLint *params,
                                angle::ParamCapture *paramCapture);
 void CaptureGetTexParameterfv_params(const State &glState,

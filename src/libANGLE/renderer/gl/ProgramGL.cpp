@@ -6,10 +6,6 @@
 
 // ProgramGL.cpp: Implements the class methods for ProgramGL.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/gl/ProgramGL.h"
 
 #include "common/WorkerThread.h"
@@ -930,7 +926,7 @@ void ProgramGL::linkResources(const gl::ProgramLinkedResources &resources)
         mState.getAttachedShader(gl::ShaderType::Fragment);
     if (fragmentShader != nullptr)
     {
-        resources.pixelLocalStorageLinker.link(fragmentShader->pixelLocalStorageFormats);
+        resources.pixelLocalStorageLinker.link(fragmentShader->pixelLocalStorageLayouts);
     }
 }
 

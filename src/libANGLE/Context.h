@@ -11,10 +11,6 @@
 #ifndef LIBANGLE_CONTEXT_H_
 #define LIBANGLE_CONTEXT_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_libc_calls
-#endif
-
 #include <mutex>
 #include <set>
 #include <string>
@@ -24,6 +20,8 @@
 #include "common/PackedEnums.h"
 #include "common/SimpleMutex.h"
 #include "common/angleutils.h"
+#include "common/partition_alloc/raw_ptr.h"
+#include "common/unsafe_buffers.h"
 #include "libANGLE/Caps.h"
 #include "libANGLE/Constants.h"
 #include "libANGLE/Context_gles_1_0_autogen.h"
@@ -60,6 +58,7 @@ class EGLImplFactory;
 namespace egl
 {
 class AttributeMap;
+class Display;
 class Surface;
 struct Config;
 class Thread;
@@ -146,6 +145,7 @@ class ErrorSet : angle::NonCopyable
 
     const GLenum mResetStrategy;
     const bool mLoseContextOnOutOfMemory;
+    const bool mLoseContextOnInternalError;
 
     // Context-loss handling
     bool mContextLostForced;
@@ -616,16 +616,16 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     egl::Error initialize();
 
-    egl::Error onDestroy(const egl::Display *display);
+    egl::Error onDestroy(const egl::ThreadSafeDisplay *display);
     ~Context() override;
 
     void setLabel(EGLLabelKHR label) override;
     EGLLabelKHR getLabel() const override;
 
-    egl::Error makeCurrent(egl::Display *display,
+    egl::Error makeCurrent(egl::ThreadSafeDisplay *display,
                            egl::Surface *drawSurface,
                            egl::Surface *readSurface);
-    egl::Error unMakeCurrent(const egl::Display *display);
+    egl::Error unMakeCurrent();
 
     // These create and destroy methods pass through to ResourceManager, which owns these objects.
     bool createBuffer(BufferID *outBuffer);
@@ -641,6 +641,9 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     void deleteProgramPipeline(ProgramPipelineID pipeline);
     void deleteMemoryObject(MemoryObjectID memoryObject);
     void deleteSemaphore(SemaphoreID semaphore);
+
+    // Only used for capturing frame data in ANGLE_capture_enabled builds.
+    bool canProtectCoherentMemoryDirectly();
 
     void bindReadFramebuffer(FramebufferID framebufferHandle);
     void bindDrawFramebuffer(FramebufferID framebufferHandle);
@@ -719,9 +722,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     size_t getExtensionStringCount() const;
 
     bool isExtensionRequestable(const char *name) const;
-    bool isExtensionDisablable(const char *name) const;
     size_t getRequestableExtensionStringCount() const;
-    void setExtensionEnabled(const char *name, bool enabled);
     void reinitializeAfterExtensionsChanged();
 
     rx::ContextImpl *getImplementation() const { return mImplementation.get(); }
@@ -729,7 +730,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     [[nodiscard]] bool getScratchBuffer(size_t requestedSizeBytes,
                                         angle::MemoryBuffer **scratchBufferOut) const;
     [[nodiscard]] bool getZeroFilledBuffer(size_t requstedSizeBytes,
-                                           angle::MemoryBuffer **zeroBufferOut) const;
+                                           const angle::MemoryBuffer **zeroBufferOut) const;
     angle::ScratchBuffer *getScratchBuffer() const;
 
     angle::Result prepareForCopyImage();
@@ -738,8 +739,6 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     MemoryProgramCache *getMemoryProgramCache() const { return mMemoryProgramCache; }
     MemoryShaderCache *getMemoryShaderCache() const { return mMemoryShaderCache; }
-
-    angle::SimpleMutex &getProgramCacheMutex() const;
 
     bool hasBeenCurrent() const { return mHasBeenCurrent; }
     egl::Display *getDisplay() const { return mDisplay; }
@@ -756,7 +755,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     }
 
     bool isShared() const { return mShared; }
-    bool isSharedContext() const { return mSharedContext; }
+    bool isSharedContext() const { return mSharedContext.load(std::memory_order_relaxed); }
     // Once a context is setShared() it cannot be undone
     void setShared()
     {
@@ -771,6 +770,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     const TextureCapsMap &getTextureCaps() const { return mState.getTextureCaps(); }
     const Extensions &getExtensions() const { return mState.getExtensions(); }
     const Limitations &getLimitations() const { return mState.getLimitations(); }
+    bool getExtensionsEnabled() const { return mExtensionsEnabled; }
     bool isGLES1() const;
 
     // To be used **only** directly by the entry points.
@@ -809,8 +809,9 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     bool nameStartsWithReservedPrefix(const GLchar *name) const
     {
-        return (strncmp(name, "gl_", 3) == 0) ||
-               (isWebGL() && (strncmp(name, "webgl_", 6) == 0 || strncmp(name, "_webgl_", 7) == 0));
+        return (ANGLE_UNSAFE_TODO(strncmp(name, "gl_", 3)) == 0) ||
+               (isWebGL() && (ANGLE_UNSAFE_TODO(strncmp(name, "webgl_", 6)) == 0 ||
+                              ANGLE_UNSAFE_TODO(strncmp(name, "_webgl_", 7)) == 0));
     }
 
     ANGLE_INLINE bool isTextureGenerated(TextureID texture) const
@@ -922,9 +923,30 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
                                 GLuint framebufferStencilSize) const;
     bool noopClearBuffer(GLenum buffer, GLint drawbuffer) const;
 
-    void addRef() const { mRefCount++; }
-    void release() const { mRefCount--; }
-    bool isReferenced() const { return mRefCount > 0; }
+    // References that keep the Context alive, see egl::ContextMap.  A thread that has the Context
+    // current holds one, and so does an EGL entry point that looks the Context up by its handle
+    // while it uses it (see egl::ScopedContextRef).
+    void addRef() const { mRefCount.fetch_add(1, std::memory_order_relaxed); }
+    void release() const
+    {
+        size_t prev = mRefCount.fetch_sub(1, std::memory_order_acq_rel);
+        ASSERT(prev > 0);
+    }
+    size_t getRefCount() const { return mRefCount.load(std::memory_order_acquire); }
+
+    // Whether the Context is current on a thread.  A Context is current on one thread at most.
+    // This changes in egl::ThreadSafeDisplay::makeCurrent(), under the ContextMutex.
+    bool isCurrentOnAnyThread() const
+    {
+        return mIsCurrentOnAnyThread.load(std::memory_order_acquire);
+    }
+    void setIsCurrentOnAnyThread(bool isCurrentOnAnyThread)
+    {
+        // A Context can be current on at most one thread, and this is only called under
+        // ContextMutex when the thread's current Context changes, so the state must always toggle.
+        ASSERT(this->isCurrentOnAnyThread() != isCurrentOnAnyThread);
+        mIsCurrentOnAnyThread.store(isCurrentOnAnyThread, std::memory_order_release);
+    }
 
     egl::ShareGroup *getShareGroup() const { return mState.getShareGroup(); }
 
@@ -935,8 +957,8 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     bool supportsGeometryOrTesselation() const;
     void dirtyAllState();
 
-    bool isDestroyed() const { return mIsDestroyed; }
-    void setIsDestroyed() { mIsDestroyed = true; }
+    bool isDestroyed() const { return mIsDestroyed.load(std::memory_order_acquire); }
+    void setIsDestroyed() { mIsDestroyed.store(true, std::memory_order_release); }
 
     // This function acts as glEnable(GL_COLOR_LOGIC_OP), but it's called from the GLES1 emulation
     // code to implement logicOp using the non-GLES1 functionality (i.e. GL_ANGLE_logic_op).  The
@@ -950,17 +972,14 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     const angle::PerfMonitorCounterGroupsInfo &getPerfMonitorCounterGroups() const;
 
-    // Ends the currently active pixel local storage session with GL_STORE_OP_STORE on all planes.
-    void endPixelLocalStorageImplicit();
-
     bool areBlobCacheFuncsSet() const;
 
     size_t getMemoryUsage() const;
 
-    // Only used by vulkan backend.
     void onSwapChainImageChanged() const { mDefaultFramebuffer->onSwapChainImageChanged(); }
     void onBufferChanged(const Buffer *buffer,
                          const angle::SubjectMessage message,
+                         bool isUsedInTransformFeedback,
                          VertexArrayBufferBindingMask vertexArrayBufferBindingMask) const
     {
         // Notify current vertex array of the buffer changed. Note that other vertex arrays of this
@@ -972,6 +991,10 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
             mState.mVertexArray->onBufferChanged(this, buffer, message,
                                                  vertexArrayBufferBindingMask);
         }
+        if (isUsedInTransformFeedback && message == angle::SubjectMessage::SubjectChanged)
+        {
+            invalidateTransformFeedbackCapacities(buffer);
+        }
     }
 
     AttributesMask getActiveBufferedAttribsMask() const;
@@ -982,6 +1005,16 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     GLint64 getNonInstancedVertexElementLimit() const;
     GLint64 getInstancedVertexElementLimit() const;
     void onActiveTransformFeedbackChange();
+
+    bool retainIdUntilObjectDestroyed() const;
+
+    void onBufferDestroy(const Buffer *buffer) const;
+    void onTextureDestroy(const Texture *texture) const;
+    void onRenderbufferDestroy(const Renderbuffer *renderBuffer) const;
+    void onSamplerDestroy(const Sampler *sampler) const;
+    void onSyncDestroy(const Sync *sync) const;
+    void onFramebufferDestroy(const Framebuffer *framebuffer) const;
+    void onProgramPipelineDestroy(const ProgramPipeline *programPipeline) const;
 
   private:
     void initializeDefaultResources();
@@ -1019,6 +1052,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     egl::Error setDefaultFramebuffer(egl::Surface *drawSurface, egl::Surface *readSurface);
     egl::Error unsetDefaultFramebuffer();
 
+    const char *makeStaticString(const std::string &str);
     void initRendererString();
     void initVendorString();
     void initVersionStrings();
@@ -1030,6 +1064,14 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     gl::LabeledObject *getLabeledObject(GLenum identifier, GLuint name) const;
     gl::LabeledObject *getLabeledObjectFromPtr(const void *ptr) const;
+
+    angle::Result readPixelsImpl(GLint x,
+                                 GLint y,
+                                 GLsizei width,
+                                 GLsizei height,
+                                 GLenum format,
+                                 GLenum type,
+                                 void *pixels);
 
     void setUniform1iImpl(Program *program,
                           UniformLocation location,
@@ -1046,10 +1088,11 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     void updateActiveAttribsMaskIfNeeded() const;
 
     void endTilingImplicit();
+    void invalidateTransformFeedbackCapacities(const Buffer *buffer) const;
 
     State mState;
     bool mShared;
-    bool mSharedContext;
+    std::atomic<bool> mSharedContext;
     bool mDisplayTextureShareGroup;
     bool mDisplaySemaphoreShareGroup;
 
@@ -1083,6 +1126,12 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     TransformFeedbackMap mTransformFeedbackMap;
     HandleAllocator mTransformFeedbackHandleAllocator;
 
+    // Some GL queries return a "static" string, which ANGLE interprets as a string that doesn't
+    // need to be deallocated by the application but which automatically gets freed on context
+    // destruction, following mesa.  In typical drivers, these strings are calculated once and never
+    // change and so could have been std::string, but ANGLE_request_extension makes it such that
+    // some strings do change and so the "static string cache" is used to store the backing for
+    // these pointers.
     const char *mVendorString;
     const char *mVersionString;
     const char *mShadingLanguageString;
@@ -1091,6 +1140,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     std::vector<const char *> mExtensionStrings;
     const char *mRequestableExtensionString;
     std::vector<const char *> mRequestableExtensionStrings;
+    std::set<std::string> mStaticStrings;
 
     // GLES1 renderer state
     std::unique_ptr<GLES1Renderer> mGLES1Renderer;
@@ -1100,7 +1150,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     const bool mSurfacelessSupported;
     egl::Surface *mCurrentDrawSurface;
     egl::Surface *mCurrentReadSurface;
-    egl::Display *mDisplay;
+    raw_ptr<egl::Display> mDisplay;
     const bool mWebGLContext;
     const bool mHardenedContext;
     bool mBufferAccessValidationEnabled;
@@ -1145,35 +1195,15 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     // Cache representation of the serialized context string.
     mutable std::string mCachedSerializedStateString;
 
-    mutable size_t mRefCount;
+    // Standard life time management reference counting for Context object. See addRef() for detail.
+    mutable std::atomic<size_t> mRefCount;
+    // See isCurrentOnAnyThread().
+    std::atomic<bool> mIsCurrentOnAnyThread;
 
-    OverlayType mOverlay;
-
-    bool mIsDestroyed;
+    std::atomic<bool> mIsDestroyed;
+    bool mDestroyedManagers;
 
     std::unique_ptr<Framebuffer> mDefaultFramebuffer;
-};
-
-class [[nodiscard]] ScopedContextRef
-{
-  public:
-    ScopedContextRef(Context *context) : mContext(context)
-    {
-        if (mContext)
-        {
-            mContext->addRef();
-        }
-    }
-    ~ScopedContextRef()
-    {
-        if (mContext)
-        {
-            mContext->release();
-        }
-    }
-
-  private:
-    Context *const mContext;
 };
 
 // Thread-local current valid context bound to the thread.

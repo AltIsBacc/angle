@@ -24,7 +24,7 @@ class ShCompileTest : public testing::Test
     {
         sh::InitBuiltInResources(&mResources);
         mCompiler = sh::ConstructCompiler(GL_FRAGMENT_SHADER, SH_WEBGL_SPEC,
-                                          SH_GLSL_COMPATIBILITY_OUTPUT, &mResources);
+                                          SH_GLSL_150_CORE_OUTPUT, &mResources);
         ASSERT_TRUE(mCompiler != nullptr) << "Compiler could not be constructed.";
     }
 
@@ -42,6 +42,7 @@ class ShCompileTest : public testing::Test
         ShCompileOptions options    = {};
         options.objectCode          = true;
         options.initOutputVariables = true;
+        options.outputDebugInfo     = true;
 
         bool success                  = sh::Compile(mCompiler, shaderStrings, stringCount, options);
         const std::string &compileLog = sh::GetInfoLog(mCompiler);
@@ -84,7 +85,7 @@ class ShCompileComputeTest : public ShCompileTest
     {
         sh::InitBuiltInResources(&mResources);
         mCompiler = sh::ConstructCompiler(GL_COMPUTE_SHADER, SH_GLES3_1_SPEC,
-                                          SH_GLSL_COMPATIBILITY_OUTPUT, &mResources);
+                                          SH_GLSL_150_CORE_OUTPUT, &mResources);
         ASSERT_TRUE(mCompiler != nullptr) << "Compiler could not be constructed.";
     }
 };
@@ -206,6 +207,7 @@ TEST_F(ShCompileTest, DecimalSepLocale)
 
             ShCompileOptions compileOptions = {};
             compileOptions.objectCode       = true;
+            compileOptions.outputDebugInfo  = true;
 
             // std::locale::global() must be used instead of setlocale() to affect new streams'
             // default locale

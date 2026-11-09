@@ -7,11 +7,8 @@
 //   Test all texture unpack/upload formats for sampling correctness.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "common/mathutil.h"
+#include "common/span.h"
 #include "image_util/copyimage.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -133,7 +130,7 @@ template <typename DestT, typename SrcT, size_t SrcN>
 void ZeroAndCopy(DestT &dest, const SrcT (&src)[SrcN])
 {
     dest.fill(0);
-    memcpy(dest.data(), src, sizeof(SrcT) * SrcN);
+    Span(dest).copy_prefix_from(as_byte_span(src));
 }
 
 std::string EnumStr(const GLenum v)
@@ -144,7 +141,7 @@ std::string EnumStr(const GLenum v)
 }
 
 template <typename ColorT, typename DestT>
-void EncodeThenZeroAndCopy(DestT &dest, const float srcVals[4])
+void EncodeThenZeroAndCopy(DestT &dest, Span<const float, 4> srcVals)
 {
     ColorF srcValsF(srcVals[0], srcVals[1], srcVals[2], srcVals[3]);
 
@@ -152,7 +149,7 @@ void EncodeThenZeroAndCopy(DestT &dest, const float srcVals[4])
     ColorT::writeColor(&encoded, &srcValsF);
 
     dest.fill(0);
-    memcpy(dest.data(), &encoded, sizeof(ColorT));
+    Span(dest).copy_prefix_from(byte_span_from_ref(encoded));
 }
 }  // anonymous namespace
 
@@ -161,8 +158,6 @@ void EncodeThenZeroAndCopy(DestT &dest, const float srcVals[4])
 // Test all internalFormat/unpackFormat/unpackType combinations from ES3.0.
 void TextureUploadFormatTest::TestAll(UploadSource uploadSource)
 {
-    ANGLE_SKIP_TEST_IF(IsD3D9());
-
     constexpr char kVertShaderES2[]     = R"(
         void main()
         {
@@ -194,7 +189,7 @@ void TextureUploadFormatTest::TestAll(UploadSource uploadSource)
     glBindFramebuffer(GL_FRAMEBUFFER, backbufferFB);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, backbufferRB);
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     glViewport(0, 0, 1, 1);
 
@@ -333,7 +328,9 @@ void TextureUploadFormatTest::TestAll(UploadSource uploadSource)
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, 1);
 
         subrectBuffer.fill(0);
-        memcpy(subrectBuffer.data() + bytesPerPixel, srcBuffer.data(), bytesPerPixel);
+        Span(subrectBuffer)
+            .subspan(bytesPerPixel)
+            .copy_prefix_from(Span(srcBuffer).first(bytesPerPixel));
         if (usePBO)
         {
             glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, subrectBuffer.size(), subrectBuffer.data());
@@ -681,6 +678,32 @@ TEST_P(TextureUploadFormatTest, All)
 TEST_P(TextureUploadFormatTest_ES3, AllWithPBO)
 {
     TestAll(UploadSource::PBO);
+}
+
+// Test invalid upload format combinations in ES2
+TEST_P(TextureUploadFormatTest, InvalidTypeAndFormat)
+{
+    constexpr std::array<uint32_t, 16> kData{};
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    if (IsGLExtensionEnabled("GL_OES_rgb8_rgba8") && IsGLExtensionEnabled("GL_OES_texture_float"))
+    {
+        // Regression test for when the format check for GL_UNSIGNED_INT_2_10_10_10_REV_EXT
+        // accidentally allowed all formats.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 1, 1, 0, GL_RGB, GL_FLOAT, kData.data());
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
+
+    if (IsGLExtensionEnabled("GL_OES_required_internalformat") &&
+        IsGLExtensionEnabled("GL_OES_texture_float"))
+    {
+        // Regression test for when the format check for GL_UNSIGNED_INT_2_10_10_10_REV_EXT
+        // accidentally allowed all formats.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565_OES, 1, 1, 0, GL_RGB, GL_FLOAT, kData.data());
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
 }
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(TextureUploadFormatTest);

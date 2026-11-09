@@ -381,9 +381,9 @@ class ProgramExecutable final : public angle::Subject
         return mSamplerBoundTextureUnits;
     }
     const std::vector<ImageBinding> &getImageBindings() const { return mImageBindings; }
-    const std::vector<ShPixelLocalStorageFormat> &getPixelLocalStorageFormats() const
+    const std::vector<ShPixelLocalStorageLayout> &getPixelLocalStorageLayouts() const
     {
-        return mPixelLocalStorageFormats;
+        return mPixelLocalStorageLayouts;
     }
     std::vector<ImageBinding> *getImageBindings() { return &mImageBindings; }
     const RangeUI &getDefaultUniformRange() const { return mPod.defaultUniformRange; }
@@ -507,6 +507,23 @@ class ProgramExecutable final : public angle::Subject
         return mPod.linkedShaderVersions[shaderType];
     }
 
+    uint8_t getLinkedClipDistanceSize(ShaderType shaderType) const
+    {
+        return mPod.clipDistanceSizes[shaderType];
+    }
+    uint8_t getLinkedCullDistanceSize(ShaderType shaderType) const
+    {
+        return mPod.cullDistanceSizes[shaderType];
+    }
+    uint8_t getLinkedInputClipDistanceSize(ShaderType shaderType) const
+    {
+        return mPod.inputClipDistanceSizes[shaderType];
+    }
+    uint8_t getLinkedInputCullDistanceSize(ShaderType shaderType) const
+    {
+        return mPod.inputCullDistanceSizes[shaderType];
+    }
+
     bool isYUVOutput() const { return mPod.hasYUVOutput; }
 
     PrimitiveMode getGeometryShaderInputPrimitiveType() const
@@ -531,8 +548,6 @@ class ProgramExecutable final : public angle::Subject
 
     int getNumViews() const { return mPod.numViews; }
     bool usesMultiview() const { return mPod.numViews != -1; }
-
-    rx::SpecConstUsageBits getSpecConstUsageBits() const { return mPod.specConstUsageBits; }
 
     int getDrawIDLocation() const { return mPod.drawIDLocation; }
     int getBaseVertexLocation() const { return mPod.baseVertexLocation; }
@@ -936,11 +951,19 @@ class ProgramExecutable final : public angle::Subject
         GLenum tessGenVertexOrder;
         GLenum tessGenPointMode;
 
-        // 4 bytes
-        rx::SpecConstUsageBits specConstUsageBits;
-
         // 24 bytes
         ShaderMap<int> linkedShaderVersions;
+
+        // 6 bytes each. Array sizes of gl_ClipDistance and gl_CullDistance in each linked shader
+        // stage (as determined by the compiler), or 0 if unused. Used to validate the built-in
+        // varyings between stages of different programs in a program pipeline.
+        ShaderMap<uint8_t> clipDistanceSizes;
+        ShaderMap<uint8_t> cullDistanceSizes;
+        ShaderMap<uint8_t> inputClipDistanceSizes;
+        ShaderMap<uint8_t> inputCullDistanceSizes;
+
+        // 4 bytes
+        uint32_t padding;
     } mPod;
     ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
 
@@ -1013,7 +1036,7 @@ class ProgramExecutable final : public angle::Subject
 
     // ANGLE_shader_pixel_local_storage: A mapping from binding index to the PLS uniform format at
     // that index.
-    std::vector<ShPixelLocalStorageFormat> mPixelLocalStorageFormats;
+    std::vector<ShPixelLocalStorageLayout> mPixelLocalStorageLayouts;
 
     ShaderMap<std::vector<sh::ShaderVariable>> mLinkedOutputVaryings;
     ShaderMap<std::vector<sh::ShaderVariable>> mLinkedInputVaryings;

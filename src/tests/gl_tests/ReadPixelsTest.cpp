@@ -7,12 +7,10 @@
 //   Tests calls related to glReadPixels.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/span.h"
 #include "test_utils/ANGLETest.h"
 
+#include <algorithm>
 #include <array>
 
 #include "test_utils/gl_raii.h"
@@ -63,6 +61,50 @@ TEST_P(ReadPixelsTest, OutOfBounds)
         {
             EXPECT_EQ(GLColor::red, pixels[y * (pixelsWidth + offset) + x]);
         }
+    }
+}
+
+// Test readPixels with a large texture to verify no overflow in pitch calculations.
+TEST_P(ReadPixelsTest, LargeTexture)
+{
+    // Need ES3 for RGBA32F
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3);
+
+    GLint maxTextureSize;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+    ANGLE_SKIP_TEST_IF(maxTextureSize < 16384);
+
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 16384, 8193, 0, GL_RGBA, GL_FLOAT, nullptr);
+    GLenum err = glGetError();
+    ANGLE_SKIP_TEST_IF(err == GL_OUT_OF_MEMORY || err == GL_INVALID_OPERATION);
+    EXPECT_GL_NO_ERROR();
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Clear the row at 8192 to a specific color.
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(0, 8192, 16384, 1);
+    glClearColor(0.5f, 0.5f, 0.5f, 0.5f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
+
+    ANGLE_SKIP_TEST_IF(glGetError() == GL_OUT_OF_MEMORY);
+    EXPECT_GL_NO_ERROR();
+
+    // Call gl.readPixels(0, 8192, 16384, 1, gl.RGBA, gl.FLOAT, outputBuffer).
+    std::vector<float> data(16384 * 4);
+    glReadPixels(0, 8192, 16384, 1, GL_RGBA, GL_FLOAT, data.data());
+    ANGLE_SKIP_TEST_IF(glGetError() == GL_OUT_OF_MEMORY);
+    EXPECT_GL_NO_ERROR();
+
+    for (size_t i = 0; i < 16384 * 4; ++i)
+    {
+        EXPECT_EQ(0.5f, data[i]);
     }
 }
 
@@ -146,8 +188,8 @@ TEST_P(ReadPixelsPBONVTest, Basic)
     glBindBuffer(GL_PIXEL_PACK_BUFFER, mPBO);
     glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
-    void *mappedPtr = glMapBufferRangeEXT(GL_PIXEL_PACK_BUFFER, 0, mPBOBufferSize, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor =
+        MapBufferRangeEXT<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, mPBOBufferSize, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor::red, dataColor[0]);
@@ -164,9 +206,6 @@ TEST_P(ReadPixelsPBONVTest, SubDataPreservesContents)
     ANGLE_SKIP_TEST_IF(!hasPBOExts() || !IsGLExtensionEnabled("GL_EXT_map_buffer_range") ||
                        !IsGLExtensionEnabled("GL_OES_mapbuffer"));
 
-    // anglebug.com/40096466
-    ANGLE_SKIP_TEST_IF(IsMac() && IsNVIDIA() && IsDesktopOpenGL());
-
     glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     EXPECT_GL_NO_ERROR();
@@ -180,8 +219,7 @@ TEST_P(ReadPixelsPBONVTest, SubDataPreservesContents)
     glBindBuffer(GL_ARRAY_BUFFER, mPBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, 4, data);
 
-    void *mappedPtr    = glMapBufferRangeEXT(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRangeEXT<const GLColor>(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor(1, 2, 3, 4), dataColor[0]);
@@ -196,9 +234,6 @@ TEST_P(ReadPixelsPBONVTest, DynamicPBO)
 {
     ANGLE_SKIP_TEST_IF(!hasPBOExts() || !IsGLExtensionEnabled("GL_EXT_map_buffer_range") ||
                        !IsGLExtensionEnabled("GL_OES_mapbuffer"));
-
-    // anglebug.com/40096466
-    ANGLE_SKIP_TEST_IF(IsMac() && IsNVIDIA() && IsDesktopOpenGL());
 
     glBindBuffer(GL_PIXEL_PACK_BUFFER, mPBO);
     glBufferData(GL_PIXEL_PACK_BUFFER, 4 * getWindowWidth() * getWindowHeight(), nullptr,
@@ -216,8 +251,7 @@ TEST_P(ReadPixelsPBONVTest, DynamicPBO)
     glBindBuffer(GL_ARRAY_BUFFER, mPBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, 4, data);
 
-    void *mappedPtr    = glMapBufferRangeEXT(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRangeEXT<const GLColor>(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor(1, 2, 3, 4), dataColor[0]);
@@ -246,9 +280,8 @@ TEST_P(ReadPixelsPBONVTest, ReadFromFBO)
     glBindBuffer(GL_PIXEL_PACK_BUFFER, mPBO);
     glReadPixels(0, 0, mFBOWidth, mFBOHeight, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
-    void *mappedPtr =
-        glMapBufferRangeEXT(GL_PIXEL_PACK_BUFFER, 0, 4 * mFBOWidth * mFBOHeight, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRangeEXT<const GLColor>(GL_PIXEL_PACK_BUFFER, 0,
+                                                      4 * mFBOWidth * mFBOHeight, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor::red, dataColor[0]);
@@ -282,9 +315,8 @@ TEST_P(ReadPixelsPBONVTest, ReadFromFBOWithDataOffset)
     glReadPixels(0, 0, mFBOWidth, mFBOHeight - 1, GL_RGBA, GL_UNSIGNED_BYTE,
                  reinterpret_cast<void *>(mFBOWidth * static_cast<uintptr_t>(4)));
 
-    void *mappedPtr =
-        glMapBufferRangeEXT(GL_PIXEL_PACK_BUFFER, 0, 4 * mFBOWidth * mFBOHeight, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRangeEXT<const GLColor>(GL_PIXEL_PACK_BUFFER, 0,
+                                                      4 * mFBOWidth * mFBOHeight, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor::green, dataColor[mFBOWidth]);
@@ -342,14 +374,114 @@ TEST_P(ReadPixelsPBOTest, Basic)
     glBindBuffer(GL_PIXEL_PACK_BUFFER, mPBO);
     glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
-    void *mappedPtr    = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, 32, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, 32, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor::red, dataColor[0]);
 
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     EXPECT_GL_NO_ERROR();
+}
+
+// Test that RGB565 readback produces identical results with and without a PBO.
+TEST_P(ReadPixelsPBOTest, RGB565MatchesClientMemory)
+{
+    GLRenderbuffer renderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGB565, 1, 1);
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glDisable(GL_DITHER);
+    glClearColor(107.0f / 255.0f, 1.0f, 132.0f / 255.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, mPBO);
+    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+
+    const GLColor *mappedColor = static_cast<const GLColor *>(
+        glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, sizeof(GLColor), GL_MAP_READ_BIT));
+    ASSERT_NE(nullptr, mappedColor);
+    const GLColor pboResult = *mappedColor;
+    EXPECT_GL_TRUE(glUnmapBuffer(GL_PIXEL_PACK_BUFFER));
+
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    GLColor clientResult;
+    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &clientResult);
+    ASSERT_GL_NO_ERROR();
+
+    EXPECT_EQ(clientResult, pboResult);
+}
+
+// Test that PBO readback is synchronized with color attachment writes in SharedPresent layout.
+TEST_P(ReadPixelsPBOTest, SharedPresentPBOReadback)
+{
+    ANGLE_SKIP_TEST_IF(!IsVulkan());
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(getEGLWindow()->getDisplay(),
+                                                     "EGL_KHR_mutable_render_buffer"));
+
+    setMutableRenderBuffer(true);
+    recreateTestFixture();
+    ASSERT_FALSE(HasFatalFailure());
+    ANGLE_SKIP_TEST_IF(IsSkipped());
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
+    const GLint colorLocation = glGetUniformLocation(program, essl1_shaders::ColorUniform());
+    ASSERT_NE(-1, colorLocation);
+
+    EGLWindow *window = getEGLWindow();
+    ASSERT_EGL_TRUE(eglSurfaceAttrib(window->getDisplay(), window->getSurface(), EGL_RENDER_BUFFER,
+                                     EGL_SINGLE_BUFFER));
+
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    if (!eglSwapBuffers(window->getDisplay(), window->getSurface()))
+    {
+        ASSERT_EGL_ERROR(EGL_BAD_MATCH);
+        ASSERT_EGL_TRUE(eglSurfaceAttrib(window->getDisplay(), window->getSurface(),
+                                         EGL_RENDER_BUFFER, EGL_BACK_BUFFER));
+        GTEST_SKIP() << "Shared present mode is not supported by this surface.";
+    }
+
+    EGLint renderBuffer = EGL_BACK_BUFFER;
+    ASSERT_EGL_TRUE(eglQueryContext(window->getDisplay(), window->getContext(), EGL_RENDER_BUFFER,
+                                    &renderBuffer));
+    ASSERT_EQ(EGL_SINGLE_BUFFER, renderBuffer);
+
+    const GLsizei width     = getWindowWidth();
+    const GLsizei height    = getWindowHeight();
+    const size_t pixelCount = width * height;
+    const size_t dataSize   = pixelCount * sizeof(GLColor);
+
+    glUseProgram(program);
+    // Change colors so stale image contents cannot accidentally match the current draw.
+    for (const GLColor &color : {GLColor::green, GLColor::red, GLColor::blue})
+    {
+        const angle::Vector4 normalizedColor = color.toNormalizedVector();
+        glUniform4f(colorLocation, normalizedColor.x(), normalizedColor.y(), normalizedColor.z(),
+                    normalizedColor.w());
+        // A draw, unlike a deferred clear, requires color attachment writes before compute reads.
+        drawQuad(program, essl1_shaders::PositionAttrib(), 0.0f);
+
+        // Keep default pack row order so framebuffer Y inversion requires compute readback.
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, mPBO);
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+
+        const GLColor *pixels = static_cast<const GLColor *>(
+            glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, dataSize, GL_MAP_READ_BIT));
+        ASSERT_NE(nullptr, pixels);
+        // SAFETY: pixels maps dataSize bytes, which contains pixelCount GLColor elements.
+        // The range is checked before the buffer is unmapped.
+        EXPECT_TRUE(ANGLE_UNSAFE_BUFFERS(
+            std::all_of(pixels, pixels + pixelCount,
+                        [&color](const GLColor &pixel) { return pixel == color; })))
+            << "Expected PBO color: " << color;
+        EXPECT_GL_TRUE(glUnmapBuffer(GL_PIXEL_PACK_BUFFER));
+        ASSERT_GL_NO_ERROR();
+    }
 }
 
 // Test copy to snorm
@@ -394,12 +526,12 @@ TEST_P(ReadPixelsPBOTest, Snorm)
     glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_BYTE, 0);
 
     std::vector<GLColor> result(kSize * kSize);
-    void *mappedPtr = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, kSize * kSize * 4, GL_MAP_READ_BIT);
-    memcpy(result.data(), mappedPtr, kSize * kSize * 4);
+    Span(result).copy_from(
+        MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, kSize * kSize * 4, GL_MAP_READ_BIT));
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     EXPECT_GL_NO_ERROR();
 
-    auto verify = [&](const GLColor expect[4]) {
+    auto verify = [&](Span<const GLColor, 4> expect) {
         for (size_t i = 0; i < kSize; ++i)
         {
             for (size_t j = 0; j < kSize; ++j)
@@ -432,8 +564,8 @@ TEST_P(ReadPixelsPBOTest, Snorm)
         glPixelStorei(GL_PACK_REVERSE_ROW_ORDER_ANGLE, GL_TRUE);
         glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_BYTE, 0);
 
-        mappedPtr = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, kSize * kSize * 4, GL_MAP_READ_BIT);
-        memcpy(result.data(), mappedPtr, kSize * kSize * 4);
+        Span(result).copy_from(MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0,
+                                                             kSize * kSize * 4, GL_MAP_READ_BIT));
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         EXPECT_GL_NO_ERROR();
 
@@ -474,9 +606,8 @@ TEST_P(ReadPixelsPBOTest, SrgbUnorm)
     glPixelStorei(GL_PACK_REVERSE_ROW_ORDER_ANGLE, GL_TRUE);
     glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, 0);
 
-    GLColor result;
-    void *mappedPtr = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, kSize * kSize * 4, GL_MAP_READ_BIT);
-    memcpy(result.data(), mappedPtr, kSize * kSize * 4);
+    const GLColor result = MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, kSize * kSize * 4,
+                                                         GL_MAP_READ_BIT)[0];
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     EXPECT_GL_NO_ERROR();
 
@@ -525,8 +656,7 @@ TEST_P(ReadPixelsPBOTest, ArrayBufferTarget)
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     glBindBuffer(GL_ARRAY_BUFFER, mPBO);
 
-    void *mappedPtr    = glMapBufferRange(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRange<const GLColor>(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor::red, dataColor[0]);
@@ -554,9 +684,8 @@ TEST_P(ReadPixelsPBOTest, ExistingDataPreserved)
 
     // Read 16x16 region from green backbuffer to PBO at offset 16
     glReadPixels(0, 0, 16, 16, GL_RGBA, GL_UNSIGNED_BYTE, reinterpret_cast<void *>(16));
-    void *mappedPtr =
-        glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, 17 * sizeof(GLColor), GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, 17 * sizeof(GLColor),
+                                                   GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     // Test pixel 0 is red (existing data)
@@ -572,9 +701,6 @@ TEST_P(ReadPixelsPBOTest, ExistingDataPreserved)
 // Test that calling SubData preserves PBO data.
 TEST_P(ReadPixelsPBOTest, SubDataPreservesContents)
 {
-    // anglebug.com/40096466
-    ANGLE_SKIP_TEST_IF(IsMac() && IsNVIDIA() && IsDesktopOpenGL());
-
     glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     EXPECT_GL_NO_ERROR();
@@ -588,8 +714,7 @@ TEST_P(ReadPixelsPBOTest, SubDataPreservesContents)
     glBindBuffer(GL_ARRAY_BUFFER, mPBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, 4, data);
 
-    void *mappedPtr    = glMapBufferRange(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRange<const GLColor>(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor(1, 2, 3, 4), dataColor[0]);
@@ -603,8 +728,6 @@ TEST_P(ReadPixelsPBOTest, SubDataOffsetPreservesContents)
 {
     // anglebug.com/42260410
     ANGLE_SKIP_TEST_IF(IsNexus5X() && IsAdreno() && IsOpenGLES());
-    // anglebug.com/40096466
-    ANGLE_SKIP_TEST_IF(IsMac() && IsNVIDIA() && IsDesktopOpenGL());
 
     glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -619,8 +742,7 @@ TEST_P(ReadPixelsPBOTest, SubDataOffsetPreservesContents)
     glBindBuffer(GL_ARRAY_BUFFER, mPBO);
     glBufferSubData(GL_ARRAY_BUFFER, 16, 4, data);
 
-    void *mappedPtr    = glMapBufferRange(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRange<const GLColor>(GL_ARRAY_BUFFER, 0, 32, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor::red, dataColor[0]);
@@ -681,9 +803,8 @@ void main()
     // Read the framebuffer pixels
     glReadPixels(0, 0, mFBOWidth, mFBOHeight, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
-    void *mappedPtr =
-        glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, sizeof(kInitialData), GL_MAP_READ_BIT);
-    GLColor *dataColor = static_cast<GLColor *>(mappedPtr);
+    auto dataColor = MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, sizeof(kInitialData),
+                                                   GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor::blue, dataColor[0]);
@@ -726,8 +847,9 @@ TEST_P(ReadPixelsPBOTest, SmallRowLength)
     glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     ASSERT_GL_NO_ERROR();
 
-    void *mappedPtr = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, mPBOBufferSize, GL_MAP_READ_BIT);
-    ASSERT_NE(nullptr, mappedPtr);
+    auto dataColor =
+        MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, mPBOBufferSize, GL_MAP_READ_BIT);
+    ASSERT_FALSE(dataColor.empty());
     ASSERT_GL_NO_ERROR();
 
     // TODO(anglebug.com/354005999)
@@ -735,14 +857,58 @@ TEST_P(ReadPixelsPBOTest, SmallRowLength)
     // Suppressed until a fallback is implemented
     if (!IsMetal())
     {
-        GLColor *colorPtr = static_cast<GLColor *>(mappedPtr);
-        EXPECT_EQ(colorPtr[0], GLColor::red);
-        EXPECT_EQ(colorPtr[1], GLColor::blue);
-        EXPECT_EQ(colorPtr[2], GLColor::white);
-        EXPECT_EQ(colorPtr[3], GLColor::black);
+        EXPECT_EQ(dataColor[0], GLColor::red);
+        EXPECT_EQ(dataColor[1], GLColor::blue);
+        EXPECT_EQ(dataColor[2], GLColor::white);
+        EXPECT_EQ(dataColor[3], GLColor::black);
     }
     ASSERT_TRUE(glUnmapBuffer(GL_PIXEL_PACK_BUFFER));
     ASSERT_GL_NO_ERROR();
+}
+
+// Test that readPixels with a large PACK_ROW_LENGTH into a PBO does not overflow int32 stride
+// calculation. Ported from crbug.com/528175330 / crbug.com/529867799.
+TEST_P(ReadPixelsPBOTest, PackLargeRowLength)
+{
+    reset(16, 8, 8);
+
+    const GLColor kExpectedColor(65, 128, 192, 255);
+    constexpr GLint kLargeRowLength          = 0x7fffffc;
+    constexpr GLsizeiptr kByteOffsetToVerify = 0x1ffffff0;
+    constexpr GLsizeiptr kBufferSize         = kByteOffsetToVerify + 256;
+
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, mPBO);
+    glBufferData(GL_PIXEL_PACK_BUFFER, kBufferSize, nullptr, GL_STREAM_READ);
+    ANGLE_SKIP_TEST_IF(glGetError() == GL_OUT_OF_MEMORY);
+    ASSERT_GL_NO_ERROR();
+
+    glClearColor(kExpectedColor.R / 255.0f, kExpectedColor.G / 255.0f, kExpectedColor.B / 255.0f,
+                 kExpectedColor.A / 255.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glPixelStorei(GL_PACK_ROW_LENGTH, kLargeRowLength);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glReadPixels(0, 0, 1, 2, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    EXPECT_GL_NO_ERROR();
+
+    auto dataColor =
+        MapBufferRange<const GLColor>(GL_PIXEL_PACK_BUFFER, 0, kBufferSize, GL_MAP_READ_BIT);
+    ASSERT_FALSE(dataColor.empty());
+
+    GLColor actualColorRow0;
+    GLColor actualColorRow1;
+
+    // Check row 0 pixel (at byte offset 0)
+    actualColorRow0 = dataColor[0];
+
+    // Check row 1 pixel (at byte offset kByteOffsetToVerify)
+    constexpr size_t kRow1OffsetInPixels = kByteOffsetToVerify / sizeof(GLColor);
+    actualColorRow1                      = dataColor[kRow1OffsetInPixels];
+
+    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+
+    EXPECT_EQ(kExpectedColor, actualColorRow0);
+    EXPECT_EQ(kExpectedColor, actualColorRow1);
 }
 
 class ReadPixelsPBODrawTest : public ReadPixelsPBOTest
@@ -947,8 +1113,7 @@ class ReadPixelsTextureNorm16PBOTest : public ReadPixelsTest
             ANGLE_SKIP_TEST_IF(!supportedCombination);
         }
 
-        T *dataRead =
-            static_cast<T *>(glMapBufferRange(GL_PIXEL_PACK_BUFFER, offset, 8, GL_MAP_READ_BIT));
+        auto dataRead = MapBufferRange<const T>(GL_PIXEL_PACK_BUFFER, offset, 8, GL_MAP_READ_BIT);
         ASSERT_GL_NO_ERROR();
 
         EXPECT_EQ(dataRead[0], data[0]);
@@ -1158,10 +1323,10 @@ TEST_P(ReadPixelsMultisampleTest, DefaultFramebufferPBO)
 
     const std::vector<angle::GLColor> expectedColor(w * h, GLColor::red);
     std::vector<angle::GLColor> actualColor(w * h);
-    const void *mapPointer =
-        glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, sizeof(angle::GLColor) * w * h, GL_MAP_READ_BIT);
-    ASSERT_NE(nullptr, mapPointer);
-    memcpy(actualColor.data(), mapPointer, sizeof(angle::GLColor) * w * h);
+    auto mapped = MapBufferRange<const angle::GLColor>(
+        GL_PIXEL_PACK_BUFFER, 0, sizeof(angle::GLColor) * w * h, GL_MAP_READ_BIT);
+    ASSERT_FALSE(mapped.empty());
+    Span(actualColor).copy_from(mapped);
     glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
     EXPECT_EQ(expectedColor, actualColor);
@@ -1299,10 +1464,10 @@ class ReadPixelsTextureTest : public ANGLETest<>
         const std::vector<angle::GLColor> expectedColor(size * size, getColorValue(level, layer));
         std::vector<angle::GLColor> actualColor(size * size);
 
-        void *mapPointer = glMapBufferRange(GL_PIXEL_PACK_BUFFER, offset,
-                                            sizeof(angle::GLColor) * size * size, GL_MAP_READ_BIT);
-        ASSERT_NE(nullptr, mapPointer);
-        memcpy(actualColor.data(), mapPointer, sizeof(angle::GLColor) * size * size);
+        auto mapped = MapBufferRange<const angle::GLColor>(
+            GL_PIXEL_PACK_BUFFER, offset, sizeof(angle::GLColor) * size * size, GL_MAP_READ_BIT);
+        ASSERT_FALSE(mapped.empty());
+        Span(actualColor).copy_from(mapped);
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
         ASSERT_GL_NO_ERROR();
@@ -1413,18 +1578,12 @@ TEST_P(ReadPixelsTextureTest, MipAttachment3DPBO)
 // Test 3D attachment readback, non-zero layer.
 TEST_P(ReadPixelsTextureTest, LayerAttachment3DPBO)
 {
-    // http://anglebug.com/40644770
-    ANGLE_SKIP_TEST_IF(IsMac() && IsIntelUHD630Mobile() && IsDesktopOpenGL());
-
     testPBORead(GL_TEXTURE_3D, 1, 0, 1);
 }
 
 // Test 3D attachment readback, non-zero mip and layer.
 TEST_P(ReadPixelsTextureTest, MipLayerAttachment3DPBO)
 {
-    // http://anglebug.com/40644770
-    ANGLE_SKIP_TEST_IF(IsMac() && IsIntelUHD630Mobile() && IsDesktopOpenGL());
-
     testPBORead(GL_TEXTURE_3D, 2, 1, 1);
 }
 
@@ -1443,18 +1602,12 @@ TEST_P(ReadPixelsTextureTest, MipAttachment2DArrayPBO)
 // Test 3D attachment readback, non-zero layer.
 TEST_P(ReadPixelsTextureTest, LayerAttachment2DArrayPBO)
 {
-    // http://anglebug.com/40644770
-    ANGLE_SKIP_TEST_IF(IsMac() && IsIntelUHD630Mobile() && IsDesktopOpenGL());
-
     testPBORead(GL_TEXTURE_2D_ARRAY, 1, 0, 1);
 }
 
 // Test 3D attachment readback, non-zero mip and layer.
 TEST_P(ReadPixelsTextureTest, MipLayerAttachment2DArrayPBO)
 {
-    // http://anglebug.com/40644770
-    ANGLE_SKIP_TEST_IF(IsMac() && IsIntelUHD630Mobile() && IsDesktopOpenGL());
-
     testPBORead(GL_TEXTURE_2D_ARRAY, 2, 1, 1);
 }
 
@@ -1532,6 +1685,34 @@ TEST_P(ReadPixelsErrorTest, ReadBufferIsNone)
     std::vector<GLubyte> pixels(4);
     EXPECT_GL_NO_ERROR();
     glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+}
+
+// The test verifies (x + width) and (y + height) integer overflows.
+TEST_P(ReadPixelsErrorTest, Overflow)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
+    std::vector<GLubyte> pixels(4);
+    ASSERT_GL_NO_ERROR();
+    glReadPixels(1, 0, 2147483647, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glReadPixels(0, 1, 4, 2147483647, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+}
+
+// The test verifies internal limits on the number of read bytes.
+TEST_P(ReadPixelsErrorTest, MemoryLimit)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
+    std::vector<GLubyte> pixels(4);
+    ASSERT_GL_NO_ERROR();
+
+    // Params overflow UINT32 used for data length computations
+    glReadPixels(0, 0, 32768, 32768, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+    // Params overflow INT32 used for buffer size
+    glReadPixels(0, 0, 16384, 32768, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
     EXPECT_GL_ERROR(GL_INVALID_OPERATION);
 }
 
@@ -1633,8 +1814,8 @@ TEST_P(ReadPixelsFloat32TypePBOTest, Basic)
     glReadPixels(0, 0, mFBOWidth, mFBOHeight, GL_RGBA, GL_FLOAT, 0);
     EXPECT_GL_NO_ERROR();
 
-    void *mappedPtr = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, mPBOBufferSize, GL_MAP_READ_BIT);
-    GLColor32F *dataColor = static_cast<GLColor32F *>(mappedPtr);
+    auto dataColor =
+        MapBufferRange<const GLColor32F>(GL_PIXEL_PACK_BUFFER, 0, mPBOBufferSize, GL_MAP_READ_BIT);
     EXPECT_GL_NO_ERROR();
 
     EXPECT_EQ(GLColor32F(0.5f, 0.2f, 0.3f, 0.4f), dataColor[0]);
@@ -1697,11 +1878,293 @@ TEST_P(ReadPixelsWebGLErrorTest, FormatIsDepthComponent)
     EXPECT_GL_ERROR(GL_INVALID_ENUM);
 }
 
+// Test class for reading pixels from framebuffers with multiple color attachments.
+class ReadPixelsMultipleColorAttachmentsTest : public ANGLETest<>
+{
+  protected:
+    static constexpr int kSize = 16;
+
+    void makeAttachedTexture(GLTexture &texture, GLenum attachment)
+    {
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, texture, 0);
+    }
+
+    void verifyReadColor(GLenum readBuffer, const GLColor &color)
+    {
+        glReadBuffer(readBuffer);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, color);
+        EXPECT_GL_NO_ERROR();
+    }
+};
+
+// Test that reading pixels from each color attachment of a framebuffer with multiple color
+// attachments returns that attachment's data.
+TEST_P(ReadPixelsMultipleColorAttachmentsTest, ReadFromEachAttachment)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+layout(location = 0) out vec4 color0;
+layout(location = 1) out vec4 color1;
+layout(location = 2) out vec4 color2;
+layout(location = 3) out vec4 color3;
+void main()
+{
+    color0 = vec4(1.0, 0.0, 0.0, 1.0);
+    color1 = vec4(0.0, 1.0, 0.0, 1.0);
+    color2 = vec4(0.0, 0.0, 1.0, 1.0);
+    color3 = vec4(1.0, 1.0, 0.0, 1.0);
+})";
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    constexpr size_t kAttachmentCount = 4;
+    std::array<GLTexture, kAttachmentCount> textures;
+    std::array<GLenum, kAttachmentCount> drawBuffers;
+    for (size_t i = 0; i < kAttachmentCount; ++i)
+    {
+        drawBuffers[i] = static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + i);
+        makeAttachedTexture(textures[i], drawBuffers[i]);
+    }
+    glDrawBuffers(kAttachmentCount, drawBuffers.data());
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    const std::array<GLColor, kAttachmentCount> kColors = {GLColor::red, GLColor::green,
+                                                           GLColor::blue, GLColor::yellow};
+
+    // Read the attachments back in an order that switches the read buffer between reads.
+    for (size_t i : {1u, 3u, 0u, 2u, 1u})
+    {
+        verifyReadColor(static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + i), kColors[i]);
+    }
+}
+
+// Test that reading into a pixel pack buffer from a framebuffer with multiple color attachments
+// returns the selected attachment's data.
+TEST_P(ReadPixelsMultipleColorAttachmentsTest, ReadFromEachAttachmentWithPBO)
+{
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    std::array<GLTexture, 2> textures;
+    makeAttachedTexture(textures[0], GL_COLOR_ATTACHMENT0);
+    makeAttachedTexture(textures[1], GL_COLOR_ATTACHMENT1);
+
+    constexpr std::array<GLenum, 2> kDrawBuffers = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, kDrawBuffers.data());
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    constexpr std::array<float, 4> kRed   = {1.0f, 0.0f, 0.0f, 1.0f};
+    constexpr std::array<float, 4> kGreen = {0.0f, 1.0f, 0.0f, 1.0f};
+    glClearBufferfv(GL_COLOR, 0, kRed.data());
+    glClearBufferfv(GL_COLOR, 1, kGreen.data());
+    ASSERT_GL_NO_ERROR();
+
+    GLBuffer pbo;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_PACK_BUFFER, kSize * kSize * 4, nullptr, GL_STREAM_READ);
+
+    const std::array<GLColor, 2> kColors = {GLColor::red, GLColor::green};
+    for (size_t i : {1u, 0u, 1u})
+    {
+        glReadBuffer(static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + i));
+        glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        ASSERT_GL_NO_ERROR();
+
+        const void *mappedPtr =
+            glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, kSize * kSize * 4, GL_MAP_READ_BIT);
+        ASSERT_NE(nullptr, mappedPtr);
+        const auto &pixels = *static_cast<const std::array<GLColor, kSize * kSize> *>(mappedPtr);
+        for (size_t j = 0; j < pixels.size(); ++j)
+        {
+            EXPECT_EQ(kColors[i], pixels[j]) << "pixel " << j;
+        }
+        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that a read area extending outside a framebuffer with multiple renderbuffer color
+// attachments only writes the in-bounds region of the destination.
+TEST_P(ReadPixelsMultipleColorAttachmentsTest, ClippedReadFromRenderbufferAttachment)
+{
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    std::array<GLRenderbuffer, 2> renderbuffers;
+    for (size_t i = 0; i < 2; ++i)
+    {
+        glBindRenderbuffer(GL_RENDERBUFFER, renderbuffers[i]);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, kSize, kSize);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + i),
+                                  GL_RENDERBUFFER, renderbuffers[i]);
+    }
+
+    constexpr std::array<GLenum, 2> kDrawBuffers = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, kDrawBuffers.data());
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    constexpr std::array<float, 4> kRed  = {1.0f, 0.0f, 0.0f, 1.0f};
+    constexpr std::array<float, 4> kBlue = {0.0f, 0.0f, 1.0f, 1.0f};
+    glClearBufferfv(GL_COLOR, 0, kRed.data());
+    glClearBufferfv(GL_COLOR, 1, kBlue.data());
+    ASSERT_GL_NO_ERROR();
+
+    // Read an area that extends past every edge of the framebuffer.
+    constexpr int kOffset   = 4;
+    constexpr int kReadSize = kSize + 2 * kOffset;
+    const GLColor kSentinel(1, 2, 3, 4);
+    std::vector<GLColor> pixels(kReadSize * kReadSize, kSentinel);
+    glReadBuffer(GL_COLOR_ATTACHMENT1);
+    glReadPixels(-kOffset, -kOffset, kReadSize, kReadSize, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixels.data());
+    EXPECT_GL_NO_ERROR();
+
+    for (int y = 0; y < kReadSize; ++y)
+    {
+        for (int x = 0; x < kReadSize; ++x)
+        {
+            const bool inBounds =
+                x >= kOffset && x < kOffset + kSize && y >= kOffset && y < kOffset + kSize;
+            EXPECT_EQ(inBounds ? GLColor::blue : kSentinel, pixels[y * kReadSize + x])
+                << "at (" << x << ", " << y << ")";
+        }
+    }
+}
+
+// Test reading from a framebuffer whose color attachments are layers of a 2D array texture.
+TEST_P(ReadPixelsMultipleColorAttachmentsTest, ReadFromTextureArrayLayerAttachments)
+{
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, kSize, kSize, 2);
+
+    // Attach the layers in reverse order.
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, texture, 0, 0);
+
+    constexpr std::array<GLenum, 2> kDrawBuffers = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, kDrawBuffers.data());
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    constexpr std::array<float, 4> kGreen  = {0.0f, 1.0f, 0.0f, 1.0f};
+    constexpr std::array<float, 4> kYellow = {1.0f, 1.0f, 0.0f, 1.0f};
+    glClearBufferfv(GL_COLOR, 0, kGreen.data());
+    glClearBufferfv(GL_COLOR, 1, kYellow.data());
+    ASSERT_GL_NO_ERROR();
+
+    verifyReadColor(GL_COLOR_ATTACHMENT1, GLColor::yellow);
+    verifyReadColor(GL_COLOR_ATTACHMENT0, GLColor::green);
+}
+
+// Test reading integer data from each color attachment of a framebuffer with multiple integer
+// color attachments.
+TEST_P(ReadPixelsMultipleColorAttachmentsTest, ReadFromEachIntegerAttachment)
+{
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    std::array<GLTexture, 2> textures;
+    for (size_t i = 0; i < 2; ++i)
+    {
+        glBindTexture(GL_TEXTURE_2D, textures[i]);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8UI, kSize, kSize);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + i),
+                               GL_TEXTURE_2D, textures[i], 0);
+    }
+
+    constexpr std::array<GLenum, 2> kDrawBuffers = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, kDrawBuffers.data());
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    constexpr std::array<std::array<GLuint, 4>, 2> kValues = {{{11, 22, 33, 44}, {55, 66, 77, 88}}};
+    glClearBufferuiv(GL_COLOR, 0, kValues[0].data());
+    glClearBufferuiv(GL_COLOR, 1, kValues[1].data());
+    ASSERT_GL_NO_ERROR();
+
+    for (size_t i : {1u, 0u})
+    {
+        glReadBuffer(static_cast<GLenum>(GL_COLOR_ATTACHMENT0 + i));
+        const GLColor32UI expectedColor(kValues[i][0], kValues[i][1], kValues[i][2], kValues[i][3]);
+        EXPECT_PIXEL_RECT32UI_EQ(0, 0, kSize, kSize, expectedColor);
+        EXPECT_GL_NO_ERROR();
+    }
+}
+
+// Test reading from a single color attachment bound at a non-zero slot, both when
+// GL_COLOR_ATTACHMENT0 was never attached and when it was detached after an MRT draw.
+TEST_P(ReadPixelsMultipleColorAttachmentsTest, ReadFromSingleNonZeroAttachment)
+{
+    // Case 1: Only GL_COLOR_ATTACHMENT1 is attached (GL_COLOR_ATTACHMENT0 was never attached).
+    {
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+        GLTexture tex1;
+        makeAttachedTexture(tex1, GL_COLOR_ATTACHMENT1);
+
+        constexpr std::array<GLenum, 2> kDrawBuffers = {GL_NONE, GL_COLOR_ATTACHMENT1};
+        glDrawBuffers(2, kDrawBuffers.data());
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        constexpr std::array<float, 4> kGreen = {0.0f, 1.0f, 0.0f, 1.0f};
+        glClearBufferfv(GL_COLOR, 1, kGreen.data());
+        ASSERT_GL_NO_ERROR();
+
+        verifyReadColor(GL_COLOR_ATTACHMENT1, GLColor::green);
+    }
+
+    // Case 2: GL_COLOR_ATTACHMENT0 is detached after an MRT draw, leaving only
+    // GL_COLOR_ATTACHMENT1 bound.
+    {
+        constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+layout(location = 0) out vec4 color0;
+layout(location = 1) out vec4 color1;
+void main()
+{
+    color0 = vec4(1.0, 0.0, 0.0, 1.0);
+    color1 = vec4(0.0, 0.0, 1.0, 1.0);
+})";
+
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+        GLTexture tex0;
+        GLTexture tex1;
+        makeAttachedTexture(tex0, GL_COLOR_ATTACHMENT0);
+        makeAttachedTexture(tex1, GL_COLOR_ATTACHMENT1);
+
+        constexpr std::array<GLenum, 2> kDrawBuffers = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+        glDrawBuffers(2, kDrawBuffers.data());
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+        drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+        ASSERT_GL_NO_ERROR();
+
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        verifyReadColor(GL_COLOR_ATTACHMENT1, GLColor::blue);
+    }
+}
+
 }  // anonymous namespace
 
 // Use this to select which configurations (e.g. which renderer, which GLES major version) these
 // tests should be run against.
-ANGLE_INSTANTIATE_TEST_ES2(ReadPixelsTest);
+ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
+    ReadPixelsTest,
+    ES3_METAL().enable(Feature::CopyTextureToBufferForReadOptimization));
 ANGLE_INSTANTIATE_TEST_ES2(ReadPixelsPBONVTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ReadPixelsPBOTest);
@@ -1728,3 +2191,9 @@ ANGLE_INSTANTIATE_TEST_ES3(ReadPixelsErrorTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ReadPixelsWebGLErrorTest);
 ANGLE_INSTANTIATE_TEST_ES3(ReadPixelsWebGLErrorTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ReadPixelsMultipleColorAttachmentsTest);
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    ReadPixelsMultipleColorAttachmentsTest,
+    ES3_OPENGL().enable(Feature::ReadPixelsViaSingleAttachmentFramebuffer),
+    ES3_OPENGLES().enable(Feature::ReadPixelsViaSingleAttachmentFramebuffer));

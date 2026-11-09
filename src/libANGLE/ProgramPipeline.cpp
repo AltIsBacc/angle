@@ -140,18 +140,6 @@ void ProgramPipelineState::updateExecutableTextures()
     }
 }
 
-void ProgramPipelineState::updateExecutableSpecConstUsageBits()
-{
-    rx::SpecConstUsageBits specConstUsageBits;
-    for (const ShaderType shaderType : mExecutable->getLinkedShaderStages())
-    {
-        const SharedProgramExecutable &programExecutable = getShaderProgramExecutable(shaderType);
-        ASSERT(programExecutable);
-        specConstUsageBits |= programExecutable->getSpecConstUsageBits();
-    }
-    mExecutable->mPod.specConstUsageBits = specConstUsageBits;
-}
-
 ProgramPipeline::ProgramPipeline(rx::GLImplFactory *factory, ProgramPipelineID handle)
     : RefCountObject(factory->generateSerial(), handle),
       mProgramPipelineImpl(factory->createProgramPipeline(mState)),
@@ -181,6 +169,11 @@ void ProgramPipeline::onDestroy(const Context *context)
             ASSERT(program->getRefCount());
             program->release(context);
         }
+    }
+
+    if (context && context->retainIdUntilObjectDestroyed())
+    {
+        context->onProgramPipelineDestroy(this);
     }
 
     getImplementation()->destroy(context);
@@ -489,7 +482,6 @@ void ProgramPipeline::updateExecutable()
 
     // All Shader ProgramExecutable properties
     mState.updateExecutableTextures();
-    mState.updateExecutableSpecConstUsageBits();
     updateLinkedVaryings();
 }
 
@@ -699,27 +691,27 @@ bool ProgramPipeline::linkVaryings()
             {
                 return false;
             }
+
+            // Validate built-in varyings (gl_ClipDistance, gl_CullDistance) match between shader
+            // stages.  The array sizes are the ones determined by the compiler for each stage, as
+            // the sizes of the gl_PerVertex block fields in the linked varyings are unreliable.
+            if (!LinkValidateBuiltInVaryings(
+                    previousExecutable->getLinkedOutputVaryings(previousShaderType),
+                    programExecutable->getLinkedInputVaryings(shaderType), previousShaderType,
+                    shaderType, previousExecutable->getLinkedShaderVersion(previousShaderType),
+                    programExecutable->getLinkedShaderVersion(shaderType),
+                    previousExecutable->getLinkedClipDistanceSize(previousShaderType),
+                    previousExecutable->getLinkedCullDistanceSize(previousShaderType),
+                    programExecutable->getLinkedInputClipDistanceSize(shaderType),
+                    programExecutable->getLinkedInputCullDistanceSize(shaderType), mState.mInfoLog))
+            {
+                return false;
+            }
         }
         previousShaderType = shaderType;
     }
 
-    // TODO: http://anglebug.com/42262233 and http://anglebug.com/42262234
-    // Need to move logic of validating builtin varyings inside the for-loop above.
-    // This is because the built-in symbols `gl_ClipDistance` and `gl_CullDistance`
-    // can be redeclared in Geometry or Tessellation shaders as well.
-    const SharedProgramExecutable &vertexExecutable =
-        getShaderProgramExecutable(ShaderType::Vertex);
-    const SharedProgramExecutable &fragmentExecutable =
-        getShaderProgramExecutable(ShaderType::Fragment);
-    if (!vertexExecutable || !fragmentExecutable)
-    {
-        return true;
-    }
-    return LinkValidateBuiltInVaryings(
-        vertexExecutable->getLinkedOutputVaryings(ShaderType::Vertex),
-        fragmentExecutable->getLinkedInputVaryings(ShaderType::Fragment), ShaderType::Vertex,
-        ShaderType::Fragment, vertexExecutable->getLinkedShaderVersion(ShaderType::Vertex),
-        fragmentExecutable->getLinkedShaderVersion(ShaderType::Fragment), mState.mInfoLog);
+    return true;
 }
 
 void ProgramPipeline::validate(const Context *context)

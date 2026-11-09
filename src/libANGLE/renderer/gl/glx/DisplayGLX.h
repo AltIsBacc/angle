@@ -13,10 +13,11 @@
 #include <vector>
 
 #include "common/Optional.h"
+#include "common/SimpleMutex.h"
 #include "libANGLE/renderer/gl/DisplayGL.h"
-#include "libANGLE/renderer/gl/RendererGL.h"
 
 #include "libANGLE/renderer/gl/glx/FunctionsGLX.h"
+#include "libANGLE/renderer/gl/glx/RendererGLX.h"
 
 namespace rx
 {
@@ -25,7 +26,7 @@ class FunctionsGLX;
 
 struct SwapControlData;
 
-class DisplayGLX : public DisplayGL
+class DisplayGLX : public DisplayGL, public ThreadSafeDisplayGL
 {
   public:
     DisplayGLX(const egl::DisplayState &state);
@@ -34,10 +35,11 @@ class DisplayGLX : public DisplayGL
     egl::Error initialize(egl::Display *display) override;
     void terminate() override;
 
-    egl::Error makeCurrent(egl::Display *display,
-                           egl::Surface *drawSurface,
+    egl::Error makeCurrent(egl::Surface *drawSurface,
                            egl::Surface *readSurface,
                            gl::Context *context) override;
+    egl::Error beforeDestroyContext(const gl::Context *context) override;
+    egl::Error afterDestroyContext() override;
 
     SurfaceImpl *createWindowSurface(const egl::SurfaceState &state,
                                      EGLNativeWindowType window,
@@ -63,9 +65,6 @@ class DisplayGLX : public DisplayGL
                                const egl::AttributeMap &attribs) override;
 
     egl::ConfigSet generateConfigs() override;
-
-    bool testDeviceLost() override;
-    egl::Error restoreLostDevice(const egl::Display *display) override;
 
     bool isValidNativeWindow(EGLNativeWindowType window) const override;
 
@@ -95,12 +94,19 @@ class DisplayGLX : public DisplayGL
 
     void populateFeatureList(angle::FeatureList *features) override;
 
+    egl::Error createRenderer(glx::Context shareContext,
+                              bool makeNewContextCurrent,
+                              std::shared_ptr<RendererGLX> *outRenderer);
     RendererGL *getRenderer() const override;
+    void destroyNativeContext(glx::Context context);
 
     angle::NativeWindowSystem getWindowSystem() const override;
 
+    ThreadSafeDisplayImpl *getThreadSafeDisplayImpl() override { return this; }
+
   private:
-    egl::Error initializeContext(glx::FBConfig config,
+    egl::Error initializeContext(glx::Context shareContext,
+                                 glx::FBConfig config,
                                  const egl::AttributeMap &eglAttributes,
                                  glx::Context *context);
 
@@ -110,22 +116,26 @@ class DisplayGLX : public DisplayGL
     egl::Error makeCurrentSurfaceless(gl::Context *context) override;
 
     int getGLXFBConfigAttrib(glx::FBConfig config, int attrib) const;
-    egl::Error createContextAttribs(glx::FBConfig,
+    egl::Error createContextAttribs(glx::Context shareContext,
+                                    glx::FBConfig,
                                     const Optional<gl::Version> &version,
                                     int profileMask,
                                     glx::Context *context) const;
 
-    std::shared_ptr<RendererGL> mRenderer;
+    std::shared_ptr<RendererGLX> mRenderer;
 
     std::map<int, glx::FBConfig> configIdToGLXConfig;
 
     EGLint mRequestedVisual;
     glx::FBConfig mContextConfig;
-    glx::Context mContext;
-    angle::HashMap<uint64_t, glx::Context> mCurrentNativeContexts;
-
-    // A pbuffer the context is current on during ANGLE initialization
-    glx::Pbuffer mInitPbuffer;
+    struct NativeContext
+    {
+        glx::Context context   = nullptr;
+        glx::Drawable drawable = 0;
+        bool needsRestore      = false;
+    };
+    angle::SimpleMutex mCurrentNativeContextsMutex;
+    angle::HashMap<uint64_t, NativeContext> mCurrentNativeContexts;
 
     bool mUsesNewXDisplay;
     bool mIsMesa;
@@ -148,7 +158,7 @@ class DisplayGLX : public DisplayGL
     int mMaxSwapInterval;
     int mCurrentSwapInterval;
 
-    glx::Drawable mCurrentDrawable;
+    std::map<EGLAttrib, std::weak_ptr<RendererGLX>> mVirtualizationGroups;
 
     FunctionsGLX mGLX;
     Display *mXDisplay;

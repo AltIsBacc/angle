@@ -8,6 +8,8 @@
 
 #include "libANGLE/renderer/TextureImpl.h"
 
+#include "libANGLE/formatutils.h"
+
 namespace rx
 {
 TextureImpl::TextureImpl(const gl::TextureState &state) : mState(state) {}
@@ -16,11 +18,22 @@ TextureImpl::~TextureImpl() {}
 
 void TextureImpl::onDestroy(const gl::Context *context) {}
 
+const gl::InternalFormat &TextureImpl::getCopyImageInternalFormat(const gl::Context *context,
+                                                                  GLenum internalFormat,
+                                                                  gl::Framebuffer *source) const
+{
+    // In ES 2.0 / WebGL 1, non-GL backends (TextureVk, TextureD3D,
+    // TextureMtl) currently still resolve unsized glCopyTexImage2D
+    // formats using GL_UNSIGNED_BYTE and convert/clamp float or
+    // half-float sources to 8-bit UNORM via a shader blit.
+    return gl::GetInternalFormatInfo(internalFormat, GL_UNSIGNED_BYTE);
+}
+
 angle::Result TextureImpl::copyTexture(const gl::Context *context,
                                        const gl::ImageIndex &index,
                                        GLenum internalFormat,
                                        GLenum type,
-                                       GLint sourceLevel,
+                                       gl::LevelIndex sourceLevel,
                                        bool unpackFlipY,
                                        bool unpackPremultiplyAlpha,
                                        bool unpackUnmultiplyAlpha,
@@ -33,7 +46,7 @@ angle::Result TextureImpl::copyTexture(const gl::Context *context,
 angle::Result TextureImpl::copySubTexture(const gl::Context *context,
                                           const gl::ImageIndex &index,
                                           const gl::Offset &destOffset,
-                                          GLint sourceLevel,
+                                          gl::LevelIndex sourceLevel,
                                           const gl::Box &sourceBox,
                                           bool unpackFlipY,
                                           bool unpackPremultiplyAlpha,
@@ -46,17 +59,14 @@ angle::Result TextureImpl::copySubTexture(const gl::Context *context,
 
 angle::Result TextureImpl::copyRenderbufferSubData(const gl::Context *context,
                                                    const gl::Renderbuffer *srcBuffer,
-                                                   GLint srcLevel,
                                                    GLint srcX,
                                                    GLint srcY,
-                                                   GLint srcZ,
-                                                   GLint dstLevel,
+                                                   gl::LevelIndex dstLevel,
                                                    GLint dstX,
                                                    GLint dstY,
-                                                   GLint dstZ,
+                                                   gl::LayerIndex dstZ,
                                                    GLsizei srcWidth,
-                                                   GLsizei srcHeight,
-                                                   GLsizei srcDepth)
+                                                   GLsizei srcHeight)
 {
     UNREACHABLE();
     return angle::Result::Stop;
@@ -64,14 +74,14 @@ angle::Result TextureImpl::copyRenderbufferSubData(const gl::Context *context,
 
 angle::Result TextureImpl::copyTextureSubData(const gl::Context *context,
                                               const gl::Texture *srcTexture,
-                                              GLint srcLevel,
+                                              gl::LevelIndex srcLevel,
                                               GLint srcX,
                                               GLint srcY,
-                                              GLint srcZ,
-                                              GLint dstLevel,
+                                              gl::LayerIndex srcZ,
+                                              gl::LevelIndex dstLevel,
                                               GLint dstX,
                                               GLint dstY,
-                                              GLint dstZ,
+                                              gl::LayerIndex dstZ,
                                               GLsizei srcWidth,
                                               GLsizei srcHeight,
                                               GLsizei srcDepth)
@@ -91,8 +101,8 @@ angle::Result TextureImpl::copy3DTexture(const gl::Context *context,
                                          gl::TextureTarget target,
                                          GLenum internalFormat,
                                          GLenum type,
-                                         GLint sourceLevel,
-                                         GLint destLevel,
+                                         gl::LevelIndex sourceLevel,
+                                         gl::LevelIndex destLevel,
                                          bool unpackFlipY,
                                          bool unpackPremultiplyAlpha,
                                          bool unpackUnmultiplyAlpha,
@@ -105,24 +115,13 @@ angle::Result TextureImpl::copy3DTexture(const gl::Context *context,
 angle::Result TextureImpl::copy3DSubTexture(const gl::Context *context,
                                             const gl::TextureTarget target,
                                             const gl::Offset &destOffset,
-                                            GLint sourceLevel,
-                                            GLint destLevel,
+                                            gl::LevelIndex sourceLevel,
+                                            gl::LevelIndex destLevel,
                                             const gl::Box &srcBox,
                                             bool unpackFlipY,
                                             bool unpackPremultiplyAlpha,
                                             bool unpackUnmultiplyAlpha,
                                             const gl::Texture *source)
-{
-    UNREACHABLE();
-    return angle::Result::Stop;
-}
-
-angle::Result TextureImpl::setImageExternal(const gl::Context *context,
-                                            const gl::ImageIndex &index,
-                                            GLenum internalFormat,
-                                            const gl::Extents &size,
-                                            GLenum format,
-                                            GLenum type)
 {
     UNREACHABLE();
     return angle::Result::Stop;
@@ -135,7 +134,7 @@ angle::Result TextureImpl::setBuffer(const gl::Context *context, GLenum internal
 }
 
 angle::Result TextureImpl::clearImage(const gl::Context *context,
-                                      GLint level,
+                                      gl::LevelIndex level,
                                       GLenum format,
                                       GLenum type,
                                       const uint8_t *data)
@@ -145,7 +144,7 @@ angle::Result TextureImpl::clearImage(const gl::Context *context,
 }
 
 angle::Result TextureImpl::clearSubImage(const gl::Context *context,
-                                         GLint level,
+                                         gl::LevelIndex level,
                                          const gl::Box &area,
                                          GLenum format,
                                          GLenum type,
@@ -160,7 +159,7 @@ GLint TextureImpl::getMemorySize() const
     return 0;
 }
 
-GLint TextureImpl::getLevelMemorySize(gl::TextureTarget target, GLint level)
+GLint TextureImpl::getLevelMemorySize(gl::TextureTarget target, gl::LevelIndex level)
 {
     return 0;
 }
@@ -191,12 +190,6 @@ GLint TextureImpl::getFormatSupportedCompressionRates(const gl::Context *context
     return 0;
 }
 
-GLint TextureImpl::getNativeID() const
-{
-    UNREACHABLE();
-    return 0;
-}
-
 GLenum TextureImpl::getColorReadFormat(const gl::Context *context)
 {
     UNREACHABLE();
@@ -213,7 +206,7 @@ angle::Result TextureImpl::getTexImage(const gl::Context *context,
                                        const gl::PixelPackState &packState,
                                        gl::Buffer *packBuffer,
                                        gl::TextureTarget target,
-                                       GLint level,
+                                       gl::LevelIndex level,
                                        GLenum format,
                                        GLenum type,
                                        void *pixels)
@@ -226,7 +219,7 @@ angle::Result TextureImpl::getCompressedTexImage(const gl::Context *context,
                                                  const gl::PixelPackState &packState,
                                                  gl::Buffer *packBuffer,
                                                  gl::TextureTarget target,
-                                                 GLint level,
+                                                 gl::LevelIndex level,
                                                  void *pixels)
 {
     UNREACHABLE();

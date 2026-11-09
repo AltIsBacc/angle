@@ -37,12 +37,8 @@ xml_inputs = sorted(khronos_xml_inputs + angle_xml_inputs)
 # Notes on categories of extensions:
 # 'Requestable' extensions are extensions that can be enabled with ANGLE_request_extension
 # 'ES-Only' extensions are always implicitly enabled.
-# 'Toggleable' extensions are like 'Requestable' except they can be also disabled.
 # 'ANGLE' extensions are extensions that are not yet officially upstreamed to Khronos.
 # We document those extensions in gl_angle_ext.xml instead of the canonical gl.xml.
-
-angle_toggleable_extensions = [
-]
 
 angle_requestable_extensions = [
     "GL_ANGLE_base_vertex_base_instance",
@@ -55,7 +51,6 @@ angle_requestable_extensions = [
     "GL_ANGLE_get_image",
     "GL_ANGLE_get_tex_level_parameter",
     "GL_ANGLE_logic_op",
-    "GL_ANGLE_lossy_etc_decode",
     "GL_ANGLE_memory_object_flags",
     "GL_ANGLE_memory_object_fuchsia",
     "GL_ANGLE_memory_size",
@@ -72,9 +67,9 @@ angle_requestable_extensions = [
     "GL_ANGLE_stencil_texturing",
     "GL_ANGLE_texture_compression_dxt3",
     "GL_ANGLE_texture_compression_dxt5",
-    "GL_ANGLE_texture_external_update",
     "GL_ANGLE_texture_multisample",
     "GL_ANGLE_texture_rectangle",
+    "GL_ANGLE_trim_memory",
     "GL_ANGLE_vulkan_image",
     "GL_ANGLE_yuv_internal_format",
     "GL_CHROMIUM_color_buffer_float_rgb",
@@ -149,6 +144,7 @@ gles_requestable_extensions = [
     "GL_EXT_shader_texture_samples",
     "GL_EXT_shadow_samplers",
     "GL_EXT_sRGB",
+    "GL_EXT_sRGB_write_control",
     "GL_EXT_tessellation_shader",
     "GL_EXT_texture_border_clamp",
     "GL_EXT_texture_buffer",
@@ -163,11 +159,13 @@ gles_requestable_extensions = [
     "GL_EXT_texture_filter_anisotropic",
     "GL_EXT_texture_filter_minmax",
     "GL_EXT_texture_format_BGRA8888",
+    "GL_EXT_texture_format_sRGB_override",
     "GL_EXT_texture_mirror_clamp_to_edge",
     "GL_EXT_texture_norm16",
     "GL_EXT_texture_query_lod",
     "GL_EXT_texture_rg",
     "GL_EXT_texture_shadow_lod",
+    "GL_EXT_texture_sRGB_decode",
     "GL_EXT_texture_sRGB_R8",
     "GL_EXT_texture_sRGB_RG8",
     "GL_EXT_texture_storage",
@@ -184,7 +182,6 @@ gles_requestable_extensions = [
     "GL_KHR_texture_compression_astc_ldr",
     "GL_KHR_texture_compression_astc_sliced_3d",
     "GL_MESA_framebuffer_flip_y",
-    "GL_NV_depth_buffer_float2",
     "GL_NV_EGL_stream_consumer_external",
     "GL_NV_framebuffer_blit",
     "GL_NV_pack_subimage",
@@ -194,17 +191,7 @@ gles_requestable_extensions = [
     "GL_NV_read_depth_stencil",
     "GL_NV_read_stencil",
     "GL_NV_shader_noperspective_interpolation",
-    "GL_OES_compressed_EAC_R11_signed_texture",
-    "GL_OES_compressed_EAC_R11_unsigned_texture",
-    "GL_OES_compressed_EAC_RG11_signed_texture",
-    "GL_OES_compressed_EAC_RG11_unsigned_texture",
     "GL_OES_compressed_ETC1_RGB8_texture",
-    "GL_OES_compressed_ETC2_punchthroughA_RGBA8_texture",
-    "GL_OES_compressed_ETC2_punchthroughA_sRGB8_alpha_texture",
-    "GL_OES_compressed_ETC2_RGB8_texture",
-    "GL_OES_compressed_ETC2_RGBA8_texture",
-    "GL_OES_compressed_ETC2_sRGB8_alpha8_texture",
-    "GL_OES_compressed_ETC2_sRGB8_texture",
     "GL_OES_compressed_paletted_texture",
     "GL_OES_copy_image",
     "GL_OES_depth_texture_cube_map",
@@ -251,12 +238,13 @@ gles_requestable_extensions = [
     "GL_QCOM_render_shared_exponent",
     "GL_QCOM_shading_rate",
     "GL_QCOM_texture_foveated",
+    "GL_QCOM_texture_lod_bias",
     "GL_QCOM_tiled_rendering",
-    "GL_WEBGL_video_texture",
 ]
 
 angle_es_only_extensions = [
     "GL_ANGLE_client_arrays",
+    "GL_ANGLE_explicit_context",
     "GL_ANGLE_get_serialized_context_string",
     "GL_ANGLE_program_binary",
     "GL_ANGLE_program_binary_readiness_query",
@@ -272,7 +260,6 @@ angle_es_only_extensions = [
     "GL_CHROMIUM_bind_uniform_location",
     "GL_CHROMIUM_copy_compressed_texture",
     "GL_CHROMIUM_copy_texture",
-    "GL_CHROMIUM_framebuffer_mixed_samples",
 ]
 
 gles_es_only_extensions = [
@@ -285,9 +272,6 @@ gles_es_only_extensions = [
     "GL_EXT_discard_framebuffer",
     "GL_EXT_multisample_compatibility",
     "GL_EXT_robustness",
-    "GL_EXT_sRGB_write_control",
-    "GL_EXT_texture_format_sRGB_override",
-    "GL_EXT_texture_sRGB_decode",
     "GL_KHR_debug",
     "GL_KHR_no_error",
     "GL_KHR_robust_buffer_access_behavior",
@@ -304,6 +288,7 @@ gles_es_only_extensions = [
 
 # ES1 (Possibly the min set of extensions needed by Android)
 gles1_extensions = [
+    "GL_EXT_texture_lod_bias",
     "GL_OES_blend_subtract",
     "GL_OES_draw_texture",
     "GL_OES_framebuffer_object",
@@ -311,6 +296,7 @@ gles1_extensions = [
     "GL_OES_point_size_array",
     "GL_OES_point_sprite",
     "GL_OES_query_matrix",
+    "GL_OES_stencil8",
     "GL_OES_texture_cube_map",
     "GL_OES_texture_mirrored_repeat",
 ]
@@ -343,14 +329,13 @@ def check_sorted(name, l):
     assert not diff_lines, '\n\nPlease sort "%s":\n%s' % (name, '\n'.join(diff_lines))
 
 
-angle_extensions = angle_requestable_extensions + angle_es_only_extensions + angle_toggleable_extensions
+angle_extensions = angle_requestable_extensions + angle_es_only_extensions
 gles_extensions = gles_requestable_extensions + gles_es_only_extensions
 supported_extensions = sorted(angle_extensions + gles1_extensions + gles_extensions)
 
 assert len(supported_extensions) == len(set(supported_extensions)), 'Duplicates in extension list'
 check_sorted('angle_requestable_extensions', angle_requestable_extensions)
 check_sorted('angle_es_only_extensions', angle_es_only_extensions)
-check_sorted('angle_toggleable_extensions', angle_toggleable_extensions)
 check_sorted('gles_requestable_extensions', gles_requestable_extensions)
 check_sorted('gles_es_only_extensions', gles_es_only_extensions)
 check_sorted('gles_extensions', gles1_extensions)
@@ -368,7 +353,6 @@ supported_egl_extensions = [
     "EGL_ANGLE_device_creation",
     "EGL_ANGLE_device_d3d",
     "EGL_ANGLE_device_d3d11",
-    "EGL_ANGLE_device_d3d9",
     "EGL_ANGLE_device_vulkan",
     "EGL_ANGLE_display_semaphore_share_group",
     "EGL_ANGLE_display_texture_share_group",
@@ -381,6 +365,7 @@ supported_egl_extensions = [
     "EGL_ANGLE_power_preference",
     "EGL_ANGLE_prepare_swap_buffers",
     "EGL_ANGLE_program_cache_control",
+    "EGL_ANGLE_query_renderer_strings",
     "EGL_ANGLE_query_surface_pointer",
     "EGL_ANGLE_stream_producer_d3d_texture",
     "EGL_ANGLE_surface_d3d_texture_2d_share_handle",
@@ -455,15 +440,14 @@ supported_cl_extensions = [
     "cl_khr_int64_base_atomics",
     "cl_khr_int64_extended_atomics",
     "cl_khr_priority_hints",
+    "cl_khr_subgroups",
 ]
 
-# Strip these suffixes from Context entry point names. NV is excluded (for now).
-strip_suffixes = ["AMD", "ANDROID", "ANGLE", "CHROMIUM", "EXT", "KHR", "OES", "OVR", "QCOM"]
+# Strip these suffixes from Context entry point names.
+strip_suffixes = [
+    "AMD", "ANDROID", "ANGLE", "CHROMIUM", "EXT", "KHR", "MESA", "NV", "OES", "OVR", "QCOM"
+]
 check_sorted('strip_suffixes', strip_suffixes)
-
-# The EGL_ANGLE_explicit_context extension is generated differently from other extensions.
-# Toggle generation here.
-support_EGL_ANGLE_explicit_context = True
 
 # Group names that appear in command/param, but not present in groups/group
 unsupported_enum_group_names = {

@@ -8,6 +8,8 @@
 #    pragma allow_unsafe_buffers
 #endif
 
+#include <array>
+
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -391,16 +393,20 @@ class CopyTexImageTest : public ANGLETest<>
     GLint mTextureUniformLocation;
 
     static constexpr uint32_t kFboCount = 3;
-    GLFramebuffer mFbos[kFboCount];
-    GLTexture mFboTextures[kFboCount];
+    std::array<GLFramebuffer, kFboCount> mFbos;
+    std::array<GLTexture, kFboCount> mFboTextures;
 
-    static constexpr uint32_t kFboSizes[kFboCount]    = {16, 16, 32};
-    static constexpr GLfloat kFboColors[kFboCount][4] = {{0.25f, 1.0f, 0.75f, 0.5f},
-                                                         {1.0f, 0.75f, 0.5f, 0.25f},
-                                                         {0.5f, 0.25f, 1.0f, 0.75f}};
-    static constexpr GLfloat kSolidColors[kFboCount][4] = {{1.0f, 0.0f, 0.0f, 1.0f},
-                                                           {0.0f, 1.0f, 0.0f, 1.0f},
-                                                           {0.0f, 0.0f, 1.0f, 1.0f}};
+    static constexpr std::array<uint32_t, kFboCount> kFboSizes                  = {16, 16, 32};
+    static constexpr std::array<std::array<GLfloat, 4>, kFboCount> kFboColors   = {{
+        {0.25f, 1.0f, 0.75f, 0.5f},
+        {1.0f, 0.75f, 0.5f, 0.25f},
+        {0.5f, 0.25f, 1.0f, 0.75f},
+    }};
+    static constexpr std::array<std::array<GLfloat, 4>, kFboCount> kSolidColors = {{
+        {1.0f, 0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f, 1.0f},
+        {0.0f, 0.0f, 1.0f, 1.0f},
+    }};
 };
 
 // CopyTexImage from GL_RGBA to GL_RGB8
@@ -705,10 +711,12 @@ TEST_P(CopyTexImageTest, CopyTexSubImageFromCubeMap)
     // The framebuffer will be a face of a cube map with a different colors for each face.  Each
     // glCopyTexSubImage2D will take one face of this image to copy over a pixel in a 1x6
     // framebuffer.
-    GLColor fboPixels[kCubeMapFaceCount]   = {GLColor::red,  GLColor::yellow, GLColor::green,
-                                              GLColor::cyan, GLColor::blue,   GLColor::magenta};
-    GLColor whitePixels[kCubeMapFaceCount] = {GLColor::white, GLColor::white, GLColor::white,
-                                              GLColor::white, GLColor::white, GLColor::white};
+    std::array<GLColor, kCubeMapFaceCount> fboPixels   = {GLColor::red,   GLColor::yellow,
+                                                          GLColor::green, GLColor::cyan,
+                                                          GLColor::blue,  GLColor::magenta};
+    std::array<GLColor, kCubeMapFaceCount> whitePixels = {GLColor::white, GLColor::white,
+                                                          GLColor::white, GLColor::white,
+                                                          GLColor::white, GLColor::white};
 
     GLTexture fboTex;
     glBindTexture(GL_TEXTURE_CUBE_MAP, fboTex);
@@ -723,7 +731,7 @@ TEST_P(CopyTexImageTest, CopyTexSubImageFromCubeMap)
     GLTexture dstTex;
     glBindTexture(GL_TEXTURE_2D, dstTex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kCubeMapFaceCount, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 whitePixels);
+                 whitePixels.data());
 
     GLFramebuffer fbo;
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -736,7 +744,7 @@ TEST_P(CopyTexImageTest, CopyTexSubImageFromCubeMap)
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, face, fboTex, 0);
 
         ASSERT_GL_NO_ERROR();
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
         // Copy the fbo (a cube map face) into a pixel of the destination texture.
         glCopyTexSubImage2D(GL_TEXTURE_2D, 0, faceIndex, 0, 0, 0, 1, 1);
@@ -746,7 +754,7 @@ TEST_P(CopyTexImageTest, CopyTexSubImageFromCubeMap)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
 
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     for (GLsizei faceIndex = 0; faceIndex < kCubeMapFaceCount; ++faceIndex)
     {
@@ -761,21 +769,22 @@ TEST_P(CopyTexImageTest, CopyTexSubImageToNonCubeCompleteDestination)
 
     // The framebuffer will be a 1x6 image with 6 different colors.  Each glCopyTexSubImage2D will
     // take one pixel of this image to copy over each face of a cube map.
-    GLColor fboPixels[kCubeMapFaceCount] = {GLColor::red,  GLColor::yellow, GLColor::green,
-                                            GLColor::cyan, GLColor::blue,   GLColor::magenta};
+    std::array<GLColor, kCubeMapFaceCount> fboPixels = {GLColor::red,   GLColor::yellow,
+                                                        GLColor::green, GLColor::cyan,
+                                                        GLColor::blue,  GLColor::magenta};
     GLColor whitePixel                   = GLColor::white;
 
     GLTexture fboTex;
     glBindTexture(GL_TEXTURE_2D, fboTex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kCubeMapFaceCount, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 fboPixels);
+                 fboPixels.data());
 
     GLFramebuffer fbo;
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fboTex, 0);
 
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     GLTexture cubeMap;
     glBindTexture(GL_TEXTURE_CUBE_MAP, cubeMap);
@@ -802,7 +811,7 @@ TEST_P(CopyTexImageTest, CopyTexSubImageToNonCubeCompleteDestination)
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, face, cubeMap, 0);
 
         ASSERT_GL_NO_ERROR();
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
         EXPECT_PIXEL_COLOR_EQ(0, 0, fboPixels[faceIndex]);
     }
@@ -854,47 +863,121 @@ TEST_P(CopyTexImageTest, DeleteAfterCopyingToTextures)
 
 // Test if glCopyTexImage2D() implementation performs conversions well from GL_TEXTURE_3D to
 // GL_TEXTURE_2D.
-// This is similar to CopyTexImageTestES3.CopyTexSubImageFromTexture3D but for GL_OES_texture_3D
-// extension.
-TEST_P(CopyTexImageTest, CopyTexSubImageFrom3DTexureOES)
+TEST_P(CopyTexImageTest, CopyTexImageFromTexture3D)
 {
-    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_3D"));
-    // TODO(anglebug.com/42262446)
-    // Seems to fail on D3D11 Windows.
-    ANGLE_SKIP_TEST_IF(IsD3D11() && IsWindows());
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3 && !IsGLExtensionEnabled("GL_OES_texture_3D"));
 
-    // http://anglebug.com/42263501
-    ANGLE_SKIP_TEST_IF((IsPixel2() || IsNexus5X()) && IsOpenGLES());
+    constexpr GLsizei kTexSize = 4;
+    constexpr GLsizei kLayers  = 2;
+    std::vector<GLColor> red(kTexSize * kTexSize, GLColor::red);
+    std::vector<GLColor> green(kTexSize * kTexSize, GLColor::green);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    GLTexture src_object_id;
+    glBindTexture(GL_TEXTURE_3D, src_object_id);
+    ASSERT_GL_NO_ERROR();
+
+    if (getClientMajorVersion() < 3)
+    {
+        glTexImage3DOES(GL_TEXTURE_3D, 0, GL_RGBA, kTexSize, kTexSize, kLayers, 0, GL_RGBA,
+                        GL_UNSIGNED_BYTE, NULL);
+        glTexSubImage3DOES(GL_TEXTURE_3D, 0, 0, 0, 1, kTexSize, kTexSize, 1, GL_RGBA,
+                           GL_UNSIGNED_BYTE, red.data());
+        glTexSubImage3DOES(GL_TEXTURE_3D, 0, 0, 0, 0, kTexSize, kTexSize, 1, GL_RGBA,
+                           GL_UNSIGNED_BYTE, green.data());
+        glFramebufferTexture3DOES(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D,
+                                  src_object_id, 0, 1);
+    }
+    else
+    {
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kTexSize, kTexSize, kLayers, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, NULL);
+        glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 1, kTexSize, kTexSize, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                        red.data());
+        glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, kTexSize, kTexSize, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                        green.data());
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, src_object_id, 0, 1);
+    }
+    ASSERT_GL_NO_ERROR();
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    GLTexture dst_object_id;
+    glBindTexture(GL_TEXTURE_2D, dst_object_id);
+    if (getClientMajorVersion() < 3)
+    {
+        glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, kTexSize, kTexSize, 0);
+    }
+    else
+    {
+        glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 0, 0, kTexSize, kTexSize, 0);
+    }
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst_object_id, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test if glCopySubTexImage2D() implementation performs conversions well from GL_TEXTURE_3D to
+// GL_TEXTURE_2D.
+TEST_P(CopyTexImageTest, CopyTexSubImageFromTexture3D)
+{
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3 && !IsGLExtensionEnabled("GL_OES_texture_3D"));
 
     constexpr GLsizei kDepth = 6;
 
     // The framebuffer will be a slice of a 3d texture with a different colors for each slice.  Each
     // glCopyTexSubImage2D will take one face of this image to copy over a pixel in a 1x6
     // framebuffer.
-    GLColor fboPixels[kDepth]   = {GLColor::red,  GLColor::yellow, GLColor::green,
-                                   GLColor::cyan, GLColor::blue,   GLColor::magenta};
-    GLColor whitePixels[kDepth] = {GLColor::white, GLColor::white, GLColor::white,
-                                   GLColor::white, GLColor::white, GLColor::white};
+    std::array<GLColor, kDepth> fboPixels   = {GLColor::red,  GLColor::yellow, GLColor::green,
+                                               GLColor::cyan, GLColor::blue,   GLColor::magenta};
+    std::array<GLColor, kDepth> whitePixels = {GLColor::white, GLColor::white, GLColor::white,
+                                               GLColor::white, GLColor::white, GLColor::white};
 
     GLTexture fboTex;
     glBindTexture(GL_TEXTURE_3D, fboTex);
-    glTexImage3DOES(GL_TEXTURE_3D, 0, GL_RGBA, 1, 1, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                    fboPixels);
+
+    if (getClientMajorVersion() < 3)
+    {
+        glTexImage3DOES(GL_TEXTURE_3D, 0, GL_RGBA, 1, 1, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                        fboPixels.data());
+    }
+    else
+    {
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, 1, 1, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     fboPixels.data());
+    }
 
     GLTexture dstTex;
     glBindTexture(GL_TEXTURE_2D, dstTex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kDepth, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, whitePixels);
+    if (getClientMajorVersion() < 3)
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kDepth, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     whitePixels.data());
+    }
+    else
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kDepth, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     whitePixels.data());
+    }
 
     GLFramebuffer fbo;
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
     for (GLsizei slice = 0; slice < kDepth; ++slice)
     {
-        glFramebufferTexture3DOES(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D, fboTex, 0,
-                                  slice);
+        if (getClientMajorVersion() < 3)
+        {
+            glFramebufferTexture3DOES(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_3D, fboTex,
+                                      0, slice);
+        }
+        else
+        {
+            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, fboTex, 0, slice);
+        }
 
         ASSERT_GL_NO_ERROR();
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
         // Copy the fbo (a 3d slice) into a pixel of the destination texture.
         glCopyTexSubImage2D(GL_TEXTURE_2D, 0, slice, 0, 0, 0, 1, 1);
@@ -904,7 +987,7 @@ TEST_P(CopyTexImageTest, CopyTexSubImageFrom3DTexureOES)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
 
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     for (GLsizei slice = 0; slice < kDepth; ++slice)
     {
@@ -1056,6 +1139,29 @@ TEST_P(CopyTexImageTestRobustResourceInit, InvalidInputParam)
     EXPECT_GL_ERROR(GL_INVALID_VALUE);
 }
 
+// Ensure that reading out of the framebuffer bounds yields zero-initialized data
+TEST_P(CopyTexImageTestRobustResourceInit, OOBReadShouldBeZeroInit)
+{
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 1, 1);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+
+    GLTexture dest;
+    glBindTexture(GL_TEXTURE_2D, dest);
+    // Copy from out of bounds of source texture, should be zeros. Copy into a format that requires
+    // emulation on most backends.
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, 1, 1, 1, 1, 0);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dest, 0);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::black);
+}
+
 // specialization of CopyTexImageTest is added so that some tests can be explicitly run with an ES3
 // context
 class CopyTexImageTestES3 : public CopyTexImageTest
@@ -1099,6 +1205,15 @@ class CopyTexImageTestES3 : public CopyTexImageTest
     // Sub-Image Offsets
     const GLint kXOffset = getWindowWidth() - kSubImageWidth;
     const GLint kYOffset = getWindowHeight() - kSubImageHeight;
+};
+
+class CopyTexImageLumaWorkaroundTestES3 : public CopyTexImageTestES3
+{};
+
+class CopyTexImageTestD3D11 : public CopyTexImageTestES3
+{
+  protected:
+    CopyTexImageTestD3D11() { setHardenedContextEnabled(true); }
 };
 
 //  The test verifies that glCopyTexSubImage2D generates a GL_INVALID_OPERATION error
@@ -1160,43 +1275,6 @@ TEST_P(CopyTexImageTestES3, 2DArraySubImage)
             EXPECT_PIXEL_COLOR_EQ(x, y, GLColor::green);
         }
     }
-    ASSERT_GL_NO_ERROR();
-}
-
-// Test if glCopyTexImage2D() implementation performs conversions well from GL_TEXTURE_3D to
-// GL_TEXTURE_2D.
-TEST_P(CopyTexImageTestES3, CopyTexSubImageFromTexture3D)
-{
-    // TODO(anglebug.com/42262446)
-    // Seems to fail on D3D11 Windows.
-    ANGLE_SKIP_TEST_IF(IsD3D11() && IsWindows());
-
-    constexpr GLsizei kTexSize = 4;
-    constexpr GLsizei kLayers  = 2;
-    std::vector<GLColor> red(kTexSize * kTexSize * kLayers, GLColor::red);
-
-    GLFramebuffer fbo;
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    // We will be reading from zeroth color attachment.
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-
-    GLTexture src_object_id;
-    glBindTexture(GL_TEXTURE_3D, src_object_id);
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kTexSize, kTexSize, kLayers, 0, GL_RGBA,
-                 GL_UNSIGNED_BYTE, NULL);
-    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 1, kTexSize, kTexSize, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                    red.data());
-    glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, src_object_id, 0, 1);
-    ASSERT_GL_NO_ERROR();
-
-    GLTexture dst_object_id;
-    glBindTexture(GL_TEXTURE_2D, dst_object_id);
-    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 0, 0, kTexSize, kTexSize, 0);
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst_object_id,
-                           0);
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
     ASSERT_GL_NO_ERROR();
 }
 
@@ -1387,7 +1465,8 @@ TEST_P(CopyTexImageTestES3, CopyTexSubImageToNonZeroBase)
                         kTexSize / 2);
     ASSERT_GL_NO_ERROR();
 
-    // Verify it.
+    // Verify both regions.
+    verifyResults(dstColor, kExpected.data(), kTexSize, 0, 0, kTexSize / 2, kTexSize / 2, 1.0);
     verifyResults(dstColor, kExpected.data(), kTexSize, kTexSize / 2, kTexSize / 2, kTexSize,
                   kTexSize, 1.0);
 }
@@ -1445,7 +1524,7 @@ void CopyTexImageTestES3::clearTexture(GLFramebuffer &fbo, GLTexture &texture, c
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     glClearColor(color.R, color.G, color.B, color.A);
     glClear(GL_COLOR_BUFFER_BIT);
     EXPECT_PIXEL_COLOR_EQ(0, 0, color);
@@ -1464,7 +1543,7 @@ void CopyTexImageTestES3::copyTexSubImage3D(GLTexture &subTexture2D,
         // Bind the 2D texture to GL_COLOR_ATTACHMENT0
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                subTexture2D, 0);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         glCopyTexSubImage3D(GL_TEXTURE_3D, 0, xOffset, yOffset, currLayer, 0, 0, subImageWidth,
                             subImageHeight);
         ASSERT_GL_NO_ERROR();
@@ -1654,6 +1733,258 @@ TEST_P(CopyTexImageTestES3, RedefineSameLevel)
                          GLColor::yellow);
 }
 
+// Test glCopyTexSubImage3D() for an SNORM 3D texture to make sure it updates the correct depth.
+TEST_P(CopyTexImageTestES3, Snorm3DTextureNonZeroOffset)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_render_snorm"));
+
+    constexpr size_t kWidth   = 9;
+    constexpr size_t kHeight  = 4;
+    constexpr size_t kDepth   = 8;
+    constexpr size_t kZOffset = 3;
+    static_assert(kZOffset < kDepth);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    // Bind an RGBA SNORM texture to the framebuffer and clear it to a single color.
+    GLTexture srcTexture;
+    glBindTexture(GL_TEXTURE_2D, srcTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8_SNORM, kWidth, kHeight);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, srcTexture, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ASSERT_GL_NO_ERROR();
+
+    // The destination texture is defined as 3D with RGB SNORM format and cleared. Then the bound
+    // framebuffer is copied into a non-zero depth of this texture.
+    GLTexture dstTexture;
+    glBindTexture(GL_TEXTURE_3D, dstTexture);
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGB8_SNORM, kWidth, kHeight, kDepth);
+
+    std::vector<uint8_t> colorWhiteRGB8Snorm(kWidth * kHeight * kDepth * 3, 0x7F);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, kWidth, kHeight, kDepth, GL_RGB, GL_BYTE,
+                    colorWhiteRGB8Snorm.data());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glCopyTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, kZOffset, 0, 0, kWidth, kHeight);
+    ASSERT_GL_NO_ERROR();
+
+    // Verify that the correct depth of the 3D texture has been copied into and the rest of it
+    // remains intact. This is done through sampling from each depth of the 3D texture and drawing
+    // to the FBO which is bound to an RGBA8 texture.
+    GLTexture outTexture;
+    glBindTexture(GL_TEXTURE_2D, outTexture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kWidth, kHeight);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, outTexture, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    constexpr char k3DSampleFromDepthFS[] = R"(#version 300 es
+precision highp float;
+uniform highp sampler3D tex3D;
+uniform int u_depth;
+out vec4 fragColor;
+void main() {
+    fragColor = texelFetch(tex3D, ivec3(0, 0, u_depth), 0);
+})";
+    ANGLE_GL_PROGRAM(tex3DProgram, essl3_shaders::vs::Simple(), k3DSampleFromDepthFS);
+    glUseProgram(tex3DProgram);
+    glUniform1i(glGetUniformLocation(tex3DProgram, "tex3D"), 0);
+
+    for (size_t z = 0; z < kDepth; z++)
+    {
+        glUniform1i(glGetUniformLocation(tex3DProgram, "u_depth"), z);
+        drawQuad(tex3DProgram, std::string(essl3_shaders::PositionAttrib()), 0.0f);
+        ASSERT_GL_NO_ERROR();
+
+        GLColor expectedColor = z == kZOffset ? GLColor::green : GLColor::white;
+        EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, expectedColor);
+    }
+}
+
+// Based on the WebGL conformance test copy-texture-image-same-texture.html.
+TEST_P(CopyTexImageLumaWorkaroundTestES3, SameTextureDifferentLevelLuminanceAlpha)
+{
+    constexpr GLsizei kSize        = 64;
+    constexpr GLsizei kSrcMipLevel = 1;
+    constexpr GLsizei kDstMipLevel = 2;
+    constexpr GLsizei kCopyMipSize = 16;
+    constexpr GLenum kSourceFormat = GL_RGBA8;
+    constexpr GLenum kSourceType   = GL_UNSIGNED_BYTE;
+    constexpr GLenum kLumaFormat   = GL_LUMINANCE_ALPHA;
+
+    std::vector<GLColor> redData(kSize * kSize, GLColor::red);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, kSourceFormat, kSize, kSize, 0, GL_RGBA, kSourceType,
+                 redData.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture,
+                           kSrcMipLevel);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glCopyTexImage2D(GL_TEXTURE_2D, kDstMipLevel, kLumaFormat, 0, 0, kCopyMipSize, kCopyMipSize, 0);
+    ASSERT_GL_NO_ERROR();
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, kDstMipLevel);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, kDstMipLevel);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    constexpr std::array<GLubyte, 4> kExpected = {255, 255, 255, 255};
+    verifyResults(texture, kExpected.data(), getWindowWidth(), 0, 0, getWindowWidth(),
+                  getWindowHeight(), 1.0);
+}
+
+// Test for same-texture copy where source and destination are different cube faces.
+//
+// Copying from +X to -X with GL_LUMINANCE_ALPHA redefines only one face first, which can make the
+// cubemap temporarily incomplete on some GLES drivers. We therefore:
+// 1) verify the temporary incomplete state,
+// 2) restore cube completeness by redefining the remaining faces to the same format/size, and
+// 3) sample the -X face to verify luminance data was copied correctly.
+TEST_P(CopyTexImageLumaWorkaroundTestES3, DifferentCubeFacesLuminanceAlpha)
+{
+    constexpr GLsizei kSize        = 16;
+    constexpr GLenum kSourceFormat = GL_RGBA8;
+    constexpr GLenum kSourceType   = GL_UNSIGNED_BYTE;
+    constexpr GLenum kLumaFormat   = GL_LUMINANCE_ALPHA;
+
+    std::vector<GLColor> redData(kSize * kSize, GLColor::red);
+
+    GLTexture cubemap;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap);
+    for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+         ++face)
+    {
+        glTexImage2D(face, 0, kSourceFormat, kSize, kSize, 0, GL_RGBA, kSourceType, redData.data());
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Bind Positive X face to FBO as source
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+                           cubemap, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Copy from Positive X (FBO) to Negative X (Target) as Luminance Alpha
+    // This is the "same texture" scenario but across faces.
+    glCopyTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, kLumaFormat, 0, 0, kSize, kSize, 0);
+    ASSERT_GL_NO_ERROR();
+
+    // The cube map can become temporarily incomplete after redefining only one face.
+    // Verify this state explicitly on drivers that enforce strict completeness.
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+                           cubemap, 0);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    // Restore cube-map completeness by redefining the remaining faces to the same format/size.
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap);
+    for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+         ++face)
+    {
+        if (face == GL_TEXTURE_CUBE_MAP_NEGATIVE_X)
+        {
+            continue;
+        }
+
+        glTexImage2D(face, 0, kLumaFormat, kSize, kSize, 0, kLumaFormat, GL_UNSIGNED_BYTE, nullptr);
+    }
+    ASSERT_GL_NO_ERROR();
+
+    // Verify Negative X face contains white (Red -> Luminance) through cube sampling now that the
+    // cubemap is complete.
+    constexpr char kCubeSampleFS[] = R"(#version 300 es
+precision mediump float;
+uniform mediump samplerCube texCube;
+out vec4 fragColor;
+void main() {
+    fragColor = texture(texCube, vec3(-1.0, 0.0, 0.0));
+})";
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    ANGLE_GL_PROGRAM(cubeProgram, essl3_shaders::vs::Simple(), kCubeSampleFS);
+    glUseProgram(cubeProgram);
+    glUniform1i(glGetUniformLocation(cubeProgram, "texCube"), 0);
+    drawQuad(cubeProgram, essl3_shaders::PositionAttrib(), 0.0f);
+    ASSERT_GL_NO_ERROR();
+
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::white);
+}
+
+// Verifies GL_LUMINANCE_ALPHA copy between different textures.
+//
+// Source and destination are separate textures, both LUMA. Since LUMA textures are not guaranteed
+// to be color-renderable on all GLES backends, the source texture is first sampled into an RGBA
+// render target, then glCopyTexImage2D(GL_LUMINANCE_ALPHA) is executed from that framebuffer into
+// the destination texture.
+TEST_P(CopyTexImageLumaWorkaroundTestES3, DifferentTexturesBothLuminanceAlpha)
+{
+    constexpr GLsizei kSize      = 16;
+    constexpr GLenum kLumaFormat = GL_LUMINANCE_ALPHA;
+
+    std::vector<GLubyte> srcData(kSize * kSize * 2u, 255u);
+
+    GLTexture srcTexture;
+    glBindTexture(GL_TEXTURE_2D, srcTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, kLumaFormat, kSize, kSize, 0, kLumaFormat, GL_UNSIGNED_BYTE,
+                 srcData.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Stage source through an RGBA render target, then copy into destination LUMA texture.
+    GLTexture renderTexture;
+    glBindTexture(GL_TEXTURE_2D, renderTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, renderTexture, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glViewport(0, 0, kSize, kSize);
+    glUseProgram(mTextureProgram);
+    // Draw srcTexture (LUMA) to renderTexture (RGBA)
+    glBindTexture(GL_TEXTURE_2D, srcTexture);
+    glUniform1i(mTextureUniformLocation, 0);
+    drawQuad(mTextureProgram, essl1_shaders::PositionAttrib(), 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    // Copy from renderTexture (RGBA FBO) to dstTexture (LUMA)
+    GLTexture dstTexture;
+    glBindTexture(GL_TEXTURE_2D, dstTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, kLumaFormat, 0, 0, kSize, kSize, 0);
+    ASSERT_GL_NO_ERROR();
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    constexpr std::array<GLubyte, 4> kExpected = {255, 255, 255, 255};
+    verifyResults(dstTexture, kExpected.data(), kSize, 0, 0, kSize, kSize, 1.0);
+}
+
 class CopyTexImagePreRotationTest : public ANGLETest<>
 {
   protected:
@@ -1750,10 +2081,10 @@ TEST_P(CopyTexImagePreRotationTest, NonZeroNonSquare)
         {0, 19, 38, 46, 4, 3, 11, GLColor::blue},
     }};
 
-    for (size_t i = 0; i < kCopies.size(); ++i)
+    for (const Copy &copy : kCopies)
     {
-        glCopyTexSubImage2D(GL_TEXTURE_2D, kCopies[i].mip, kCopies[i].texX, kCopies[i].texY,
-                            kCopies[i].x, kCopies[i].y, kCopies[i].width, kCopies[i].height);
+        glCopyTexSubImage2D(GL_TEXTURE_2D, copy.mip, copy.texX, copy.texY, copy.x, copy.y,
+                            copy.width, copy.height);
     }
 
     // Verify results
@@ -1763,12 +2094,11 @@ TEST_P(CopyTexImagePreRotationTest, NonZeroNonSquare)
     for (int mip = 0; mip < 2; ++mip)
     {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, mip);
-        for (size_t i = 0; i < kCopies.size(); ++i)
+        for (const Copy &copy : kCopies)
         {
-            if (kCopies[i].mip == mip)
+            if (copy.mip == mip)
             {
-                EXPECT_PIXEL_RECT_EQ(kCopies[i].texX, kCopies[i].texY, kCopies[i].width,
-                                     kCopies[i].height, kCopies[i].expect);
+                EXPECT_PIXEL_RECT_EQ(copy.texX, copy.texY, copy.width, copy.height, copy.expect);
             }
         }
     }
@@ -1818,14 +2148,615 @@ TEST_P(CopyTexImageTest, MixedCubeMapFormats)
     EXPECT_GL_NO_ERROR();
 }
 
-ANGLE_INSTANTIATE_TEST_ES2_AND(
+// Verify that partial glCopyTexSubImage2D into a cleared non-zero base level (with level 0
+// undefined) preserves the rest of the cleared level.
+TEST_P(CopyTexImageTestES3, CopyTexSubImagePreservesClearedNonZeroBaseLevel2D)
+{
+    constexpr GLsizei kSize = 64;
+
+    GLTexture dstTex;
+    glBindTexture(GL_TEXTURE_2D, dstTex);
+    glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1);
+
+    GLFramebuffer dstFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    GLRenderbuffer srcRbo;
+    glBindRenderbuffer(GL_RENDERBUFFER, srcRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 4, 4);
+    GLFramebuffer srcFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, srcRbo);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 1, 1, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, dstFbo);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_PIXEL_COLOR_EQ(1, 0, GLColor::blue);
+    EXPECT_PIXEL_RECT_EQ(2, 0, kSize - 2, 1, GLColor::green);
+    EXPECT_PIXEL_RECT_EQ(0, 1, kSize, kSize - 1, GLColor::green);
+}
+
+// Verify that partial glCopyTexSubImage2D into a cleared non-zero base level of a cubemap face
+// (with level 0 undefined) preserves the rest of the cleared face.
+TEST_P(CopyTexImageTestES3, CopyTexSubImagePreservesClearedNonZeroBaseLevelCube)
+{
+    constexpr GLsizei kSize = 64;
+
+    GLTexture dstTex;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, dstTex);
+    for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+         ++face)
+    {
+        glTexImage2D(face, 1, GL_RGBA8, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_BASE_LEVEL, 1);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_LEVEL, 1);
+
+    GLFramebuffer dstFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+                           dstTex, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    GLRenderbuffer srcRbo;
+    glBindRenderbuffer(GL_RENDERBUFFER, srcRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 4, 4);
+    GLFramebuffer srcFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, srcRbo);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+    glCopyTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X, 1, 0, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, dstFbo);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_PIXEL_RECT_EQ(1, 0, kSize - 1, 1, GLColor::green);
+    EXPECT_PIXEL_RECT_EQ(0, 1, kSize, kSize - 1, GLColor::green);
+}
+
+// Verify that partial glCopyTexSubImage3D into a cleared non-zero base level of a 2D array texture
+// (with level 0 undefined) preserves the rest of the cleared layer.
+TEST_P(CopyTexImageTestES3, CopyTexSubImagePreservesClearedNonZeroBaseLevel2DArray)
+{
+    constexpr GLsizei kSize = 64;
+
+    GLTexture dstTex;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, dstTex);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, kSize, kSize, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, 1);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 1);
+
+    GLFramebuffer dstFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dstTex, 1, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    GLRenderbuffer srcRbo;
+    glBindRenderbuffer(GL_RENDERBUFFER, srcRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 4, 4);
+    GLFramebuffer srcFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, srcRbo);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+    glCopyTexSubImage3D(GL_TEXTURE_2D_ARRAY, 1, 0, 0, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, dstFbo);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_PIXEL_RECT_EQ(1, 0, kSize - 1, 1, GLColor::green);
+    EXPECT_PIXEL_RECT_EQ(0, 1, kSize, kSize - 1, GLColor::green);
+}
+
+// Verify that partial glCopyTexSubImage3D into a cleared 3D texture (which always uses the CPU
+// fallback via getImageAndSyncFromStorageIfNeeded in TextureD3D_3D::copySubImage) preserves the
+// cleared slice across multiple sub-region copies.
+TEST_P(CopyTexImageTestES3, CopyTexSubImagePreservesCleared3D)
+{
+    constexpr GLsizei kSize = 16;
+
+    GLTexture dstTex;
+    glBindTexture(GL_TEXTURE_3D, dstTex);
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_RGBA8, kSize, kSize, 2);
+
+    GLFramebuffer dstFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, dstTex, 0, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    GLRenderbuffer srcRbo;
+    glBindRenderbuffer(GL_RENDERBUFFER, srcRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 4, 4);
+    GLFramebuffer srcFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, srcRbo);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glCopyTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glCopyTexSubImage3D(GL_TEXTURE_3D, 0, 1, 0, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, dstFbo);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_PIXEL_COLOR_EQ(1, 0, GLColor::blue);
+    EXPECT_PIXEL_RECT_EQ(2, 0, kSize - 2, 1, GLColor::green);
+    EXPECT_PIXEL_RECT_EQ(0, 1, kSize, kSize - 1, GLColor::green);
+}
+
+// Verify that partial glCopySubTextureCHROMIUM into a GL_SRGB8_ALPHA8 texture (which forces the
+// CPU fallback in TextureD3D_2D::copySubTexture even at base level 0) preserves storage data
+// uploaded via setData when the storage is not a render target.
+TEST_P(CopyTexImageTestES3, CopySubTexturePreservesStorageDataSRGB)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_CHROMIUM_copy_texture"));
+
+    constexpr GLsizei kSize = 16;
+    std::vector<GLColor> greenData(kSize * kSize, GLColor::green);
+    std::vector<GLColor> redData(4 * 4, GLColor::red);
+    std::vector<GLColor> blueData(4 * 4, GLColor::blue);
+
+    GLTexture dstTex;
+    glBindTexture(GL_TEXTURE_2D, dstTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_SRGB8_ALPHA8, kSize, kSize);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE,
+                    greenData.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    GLTexture srcTex;
+    glBindTexture(GL_TEXTURE_2D, srcTex);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 4, 4);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, redData.data());
+
+    glCopySubTextureCHROMIUM(srcTex, 0, GL_TEXTURE_2D, dstTex, 0, 0, 0, 0, 0, 1, 1, GL_FALSE,
+                             GL_FALSE, GL_FALSE);
+    ASSERT_GL_NO_ERROR();
+
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, blueData.data());
+    glCopySubTextureCHROMIUM(srcTex, 0, GL_TEXTURE_2D, dstTex, 0, 1, 0, 0, 0, 1, 1, GL_FALSE,
+                             GL_FALSE, GL_FALSE);
+    ASSERT_GL_NO_ERROR();
+
+    glBindTexture(GL_TEXTURE_2D, dstTex);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, kSize, kSize);
+    draw2DTexturedQuad(0.5f, 1.0f, true);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_PIXEL_COLOR_EQ(1, 0, GLColor::blue);
+    EXPECT_PIXEL_RECT_EQ(2, 0, kSize - 2, 1, GLColor::green);
+    EXPECT_PIXEL_RECT_EQ(0, 1, kSize, kSize - 1, GLColor::green);
+}
+
+// Verify that when GL_TEXTURE_BASE_LEVEL is set before glTexStorage2D, the backend uses the
+// clamped effective base level.
+TEST_P(CopyTexImageTestES3, CopyTexSubImageClampedBaseLevelAfterTexStorage)
+{
+    constexpr GLsizei kSize = 16;
+
+    GLTexture dstTex;
+    glBindTexture(GL_TEXTURE_2D, dstTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 1);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+
+    GLFramebuffer dstFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstTex, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    GLRenderbuffer srcRbo;
+    glBindRenderbuffer(GL_RENDERBUFFER, srcRbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 4, 4);
+    GLFramebuffer srcFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, srcRbo);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 1, 0, 0, 0, 1, 1);
+    ASSERT_GL_NO_ERROR();
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, dstFbo);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    EXPECT_PIXEL_COLOR_EQ(1, 0, GLColor::blue);
+    EXPECT_PIXEL_RECT_EQ(2, 0, kSize - 2, 1, GLColor::green);
+    EXPECT_PIXEL_RECT_EQ(0, 1, kSize, kSize - 1, GLColor::green);
+}
+
+// Verify that copying from level 0 of a texture to level 1 of the same texture while level 0 has
+// pending rendering copies the entire level without corruption on IMG GPUs.
+// Regression test for http://crbug.com/552672183.
+TEST_P(CopyTexImageTestES3, SameTextureCrossLevelFeedbackCopy)
+{
+    constexpr GLsizei kL0Size = 4096;
+    constexpr GLsizei kL1Size = 2048;
+
+    std::vector<GLColor> greenData(kL1Size * kL1Size, GLColor::green);
+    ANGLE_GL_PROGRAM(redProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    for (int iter = 0; iter < 5; ++iter)
+    {
+        GLTexture tex;
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kL0Size, kL0Size, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA, kL1Size, kL1Size, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     greenData.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        ASSERT_GL_NO_ERROR();
+
+        // Make the mip chain resident with one mipmap-filtered draw to the default framebuffer.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, getWindowWidth(), getWindowHeight());
+        draw2DTexturedQuad(0.5f, 1.0f, true);
+        ASSERT_GL_NO_ERROR();
+
+        // Attach L0 to a framebuffer and draw full-screen red.
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        glViewport(0, 0, kL0Size, kL0Size);
+        drawQuad(redProgram, essl1_shaders::PositionAttrib(), 0.5f);
+        ASSERT_GL_NO_ERROR();
+
+        // Perform a same-texture cross-level feedback copy from L0 (attached to fbo) into L1.
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glCopyTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA, 0, 0, kL1Size, kL1Size, 0);
+        ASSERT_GL_NO_ERROR();
+
+        // Read back L1 and verify all pixels are red (no residual green from aborted transfer).
+        GLFramebuffer readFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 1);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kL1Size, kL1Size, GLColor::red);
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Verify that glCopyTexSubImage2D from level 0 of a texture to level 1 of the same texture while
+// level 0 has pending rendering copies the entire level without corruption on IMG GPUs.
+// Regression test for http://crbug.com/552672183.
+TEST_P(CopyTexImageTestES3, SameTextureCrossLevelFeedbackCopySubImage)
+{
+    constexpr GLsizei kL0Size = 4096;
+    constexpr GLsizei kL1Size = 2048;
+
+    std::vector<GLColor> greenData(kL1Size * kL1Size, GLColor::green);
+    ANGLE_GL_PROGRAM(redProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    for (int iter = 0; iter < 5; ++iter)
+    {
+        GLTexture tex;
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kL0Size, kL0Size, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA, kL1Size, kL1Size, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     greenData.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        ASSERT_GL_NO_ERROR();
+
+        // Make the mip chain resident with one mipmap-filtered draw to the default framebuffer.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, getWindowWidth(), getWindowHeight());
+        draw2DTexturedQuad(0.5f, 1.0f, true);
+        ASSERT_GL_NO_ERROR();
+
+        // Attach L0 to a framebuffer and draw full-screen red.
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        glViewport(0, 0, kL0Size, kL0Size);
+        drawQuad(redProgram, essl1_shaders::PositionAttrib(), 0.5f);
+        ASSERT_GL_NO_ERROR();
+
+        // Perform a same-texture cross-level feedback copy via glCopyTexSubImage2D from L0 into L1.
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, 0, 0, kL1Size, kL1Size);
+        ASSERT_GL_NO_ERROR();
+
+        // Read back L1 and verify all pixels are red.
+        GLFramebuffer readFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 1);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kL1Size, kL1Size, GLColor::red);
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Verify that copying from one cube map face to another face of the same texture while the source
+// face has pending rendering copies the entire face without corruption on IMG GPUs.
+// Regression test for http://crbug.com/552672183.
+TEST_P(CopyTexImageTestES3, SameTextureCrossCubeFaceFeedbackCopy)
+{
+    constexpr GLsizei kSize = 2048;
+
+    std::vector<GLColor> greenData(kSize * kSize, GLColor::green);
+
+    constexpr char kCubeSampleFS[] = R"(#version 300 es
+precision mediump float;
+uniform mediump samplerCube texCube;
+out vec4 fragColor;
+void main() {
+    fragColor = texture(texCube, vec3(-1.0, 0.0, 0.0));
+})";
+    ANGLE_GL_PROGRAM(cubeProgram, essl3_shaders::vs::Simple(), kCubeSampleFS);
+    ANGLE_GL_PROGRAM(redProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    for (int iter = 0; iter < 5; ++iter)
+    {
+        GLTexture cubemap;
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap);
+        for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+             ++face)
+        {
+            const void *initData =
+                (face == GL_TEXTURE_CUBE_MAP_NEGATIVE_X) ? greenData.data() : nullptr;
+            glTexImage2D(face, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, initData);
+        }
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        ASSERT_GL_NO_ERROR();
+
+        // Make the cubemap resident with one draw to the default framebuffer.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, getWindowWidth(), getWindowHeight());
+        glUseProgram(cubeProgram);
+        glUniform1i(glGetUniformLocation(cubeProgram, "texCube"), 0);
+        drawQuad(cubeProgram, essl3_shaders::PositionAttrib(), 0.0f);
+        ASSERT_GL_NO_ERROR();
+
+        // Attach +X face to a framebuffer and draw full-screen red.
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+                               cubemap, 0);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        glViewport(0, 0, kSize, kSize);
+        drawQuad(redProgram, essl1_shaders::PositionAttrib(), 0.5f);
+        ASSERT_GL_NO_ERROR();
+
+        // Perform a same-texture cross-face feedback copy from +X (attached to fbo) into -X.
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemap);
+        glCopyTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGBA, 0, 0, kSize, kSize, 0);
+        ASSERT_GL_NO_ERROR();
+
+        // Read back -X face and verify all pixels are red (no residual green from aborted
+        // transfer).
+        GLFramebuffer readFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+                               cubemap, 0);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::red);
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// CopyTexImage from GL_RGBA to GL_RGBA4 cubemap, while the cubemap has incompatibly defined faces
+TEST_P(CopyTexImageTest, RGBAToRGBA4CubemapWithIncompatibleFaces)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_required_internalformat"));
+
+    constexpr uint32_t kSize = 17;
+
+    // Set up the cubemap, which will be the copy destination.
+    GLTexture cube;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cube);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    const std::vector<GLColor> kFaceData(kSize * kSize, GLColor::blue);
+    for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+         face++)
+    {
+        glTexImage2D(face, 0, GL_RGBA4, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     kFaceData.data());
+    }
+
+    // Sample once from the cubemap so it gets allocated.
+    constexpr char kCubeSampleFS[] = R"(precision mediump float;
+uniform mediump samplerCube texCube;
+void main() {
+    gl_FragColor = textureCube(texCube, vec3(-1.0, 0.0, 0.0));
+})";
+    ANGLE_GL_PROGRAM(cubeProgram, essl1_shaders::vs::Simple(), kCubeSampleFS);
+    drawQuad(cubeProgram, essl1_shaders::PositionAttrib(), 0.0f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, kFaceData[0]);
+    ASSERT_GL_NO_ERROR();
+
+    // Set up the src texture.
+    const std::vector<GLColor> kSrcData(kSize * kSize, GLColor::green);
+    GLTexture src;
+    glBindTexture(GL_TEXTURE_2D, src);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 kSrcData.data());
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+
+    // Redefine the X- face with incompatible format/size
+    const std::vector<GLColor> kIncompatibleFaceData(kSize * kSize * 100, GLColor::red);
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGBA, kSize * 10, kSize * 10, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, kIncompatibleFaceData.data());
+
+    // Copy from the framebuffer to the Y+ face (not the one that is incompatible)
+    // With ES2, glCopyTexSubImage2D can be used, but that is not allowed in ES3.
+    if (isAtLeastClientVersion(3, 0))
+    {
+        glCopyTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGBA, 0, 0, kSize, kSize, 0);
+
+        // Make the other faces compatible and verify the contents of the cube map.
+        for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+             face++)
+        {
+            if (face != GL_TEXTURE_CUBE_MAP_POSITIVE_Y)
+            {
+                glTexImage2D(face, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                             kFaceData.data());
+            }
+        }
+    }
+    else
+    {
+        glCopyTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, 0, 0, 0, 0, kSize, kSize);
+
+        // Make the incompatible face compatible and verify the contents of the cube map.
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGBA4, kSize, kSize, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, kFaceData.data());
+    }
+    ASSERT_GL_NO_ERROR();
+
+    for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+         face++)
+    {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, face, cube, 0);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize,
+                             face == GL_TEXTURE_CUBE_MAP_POSITIVE_Y ? kSrcData[0] : kFaceData[0]);
+    }
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that when redefining a texture level to a smaller size fails in the backend after the
+// backend image was already shrunk, the backend error loses the hardened context so subsequent
+// glCopyTexSubImage2D and glTexSubImage2D calls fail with GL_CONTEXT_LOST instead of reaching the
+// shrunk backend image.
+TEST_P(CopyTexImageTestD3D11, RedefineSmallerFailureDoesNotWriteOutOfBounds)
+{
+    if (sizeof(GLsizeiptr) < 8)
+    {
+        GTEST_SKIP() << "Test requires 64-bit GLsizeiptr to specify a >2 GiB PBO size.";
+    }
+
+    constexpr GLsizei kOldSize = 64;
+    constexpr GLsizei kNewSize = 4;
+
+    GLTexture srcTex;
+    glBindTexture(GL_TEXTURE_2D, srcTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kOldSize, kOldSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    GLFramebuffer readFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, srcTex, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ASSERT_GL_NO_ERROR();
+
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // With no PBO bound, pixels == nullptr defines level 0 (both frontend ImageDesc and backend
+    // Image11) as kOldSize x kOldSize without uploading pixel data.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, kOldSize, kOldSize, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    ASSERT_GL_NO_ERROR();
+
+    // A PBO larger than D3D11's 2048 MiB buffer limit
+    // (D3D11_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_C_TERM) succeeds in glBufferData(...,
+    // nullptr, ...) without allocating any memory because Buffer11::setSubData only records mSize
+    // when data == nullptr.
+    const GLsizeiptr oversizedPboBytes =
+        static_cast<GLsizeiptr>((static_cast<uint64_t>(1) << 31) + 16);
+
+    GLBuffer pbo;
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, oversizedPboBytes, nullptr, GL_STATIC_DRAW);
+    ASSERT_GL_NO_ERROR();
+
+    // With pbo bound to GL_PIXEL_UNPACK_BUFFER, pixels == nullptr is byte offset 0 into pbo.
+    // TextureD3D_2D::setImage shrinks the backend Image11 to kNewSize x kNewSize in redefineImage,
+    // and then fails in fastUnpackPixels when Buffer11::getSRV lazily calls
+    // ID3D11Device::CreateBuffer for the >2048 MiB PBO. On a hardened context, this backend error
+    // immediately loses the context.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, kNewSize, kNewSize, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    EXPECT_GL_ERROR(GL_OUT_OF_MEMORY);
+
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    EXPECT_GL_ERROR(GL_CONTEXT_LOST);
+
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, kOldSize, kOldSize);
+    EXPECT_GL_ERROR(GL_CONTEXT_LOST);
+
+    std::vector<uint8_t> subData(kOldSize * kOldSize, 0xAB);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kOldSize, kOldSize, GL_RED, GL_UNSIGNED_BYTE,
+                    subData.data());
+    EXPECT_GL_ERROR(GL_CONTEXT_LOST);
+}
+
+ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     CopyTexImageTest,
     ES2_D3D11_PRESENT_PATH_FAST(),
-    ES3_VULKAN(),
     ES2_OPENGL().enable(Feature::EmulateCopyTexImage2D),
     ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2D),
     ES2_OPENGL().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
-    ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers));
+    ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES3_OPENGL().enable(Feature::EmulateCopyTexImage2D),
+    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2D),
+    ES3_OPENGL().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImageTestES3);
 ANGLE_INSTANTIATE_TEST_ES3_AND(
@@ -1833,16 +2764,27 @@ ANGLE_INSTANTIATE_TEST_ES3_AND(
     ES3_OPENGL().enable(Feature::EmulateCopyTexImage2D),
     ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2D),
     ES3_OPENGL().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
-    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers));
+    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
-ANGLE_INSTANTIATE_TEST_ES2_AND(
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImageLumaWorkaroundTestES3);
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    CopyTexImageLumaWorkaroundTestES3,
+    ES3_OPENGL().enable(Feature::ForceLumaWorkaroundForSameTextureCopyTexImage2D),
+    ES3_OPENGLES().enable(Feature::ForceLumaWorkaroundForSameTextureCopyTexImage2D),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImageTestD3D11);
+ANGLE_INSTANTIATE_TEST(CopyTexImageTestD3D11, ES3_D3D11());
+
+ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     CopyTexImageTestRobustResourceInit,
     ES2_D3D11_PRESENT_PATH_FAST(),
-    ES3_VULKAN(),
     ES2_OPENGL().enable(Feature::EmulateCopyTexImage2D),
     ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2D),
     ES2_OPENGL().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
-    ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers));
+    ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImagePreRotationTest);
 ANGLE_INSTANTIATE_TEST_ES3_AND(CopyTexImagePreRotationTest,

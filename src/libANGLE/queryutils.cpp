@@ -136,103 +136,90 @@ void ConvertFromColor(const ColorGeneric &color, GLuint *outParams)
 
 template <typename ParamType>
 void QueryTexLevelParameterBase(const Texture *texture,
-                                TextureTarget target,
+                                TextureTarget targetPacked,
                                 GLint level,
-                                GLenum pname,
+                                TextureImageParameter pnamePacked,
                                 ParamType *params)
 {
     ASSERT(texture != nullptr);
-    const InternalFormat *info = texture->getTextureState().getImageDesc(target, level).format.info;
+    const InternalFormat *info =
+        texture->getTextureState().getImageDesc(targetPacked, level).format.info;
 
-    switch (pname)
+    switch (pnamePacked)
     {
-        case GL_TEXTURE_RED_TYPE:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, info->redBits ? info->componentType : GL_NONE);
+        case TextureImageParameter::Width:
+            *params = clampCast<ParamType>(texture->getWidth(targetPacked, level));
             break;
-        case GL_TEXTURE_GREEN_TYPE:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, info->greenBits ? info->componentType : GL_NONE);
+        case TextureImageParameter::Height:
+            *params = clampCast<ParamType>(texture->getHeight(targetPacked, level));
             break;
-        case GL_TEXTURE_BLUE_TYPE:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, info->blueBits ? info->componentType : GL_NONE);
+        case TextureImageParameter::Depth:
+            *params = clampCast<ParamType>(texture->getDepth(targetPacked, level));
             break;
-        case GL_TEXTURE_ALPHA_TYPE:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, info->alphaBits ? info->componentType : GL_NONE);
+        case TextureImageParameter::InternalFormat:
+            *params = static_cast<ParamType>(info->internalFormat ? info->internalFormat : GL_RGBA);
             break;
-        case GL_TEXTURE_DEPTH_TYPE:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, info->depthBits ? info->componentType : GL_NONE);
+        case TextureImageParameter::RedSize:
+            *params = static_cast<ParamType>(info->redBits);
             break;
-        case GL_TEXTURE_RED_SIZE:
-            *params = CastFromGLintStateValue<ParamType>(pname, info->redBits);
+        case TextureImageParameter::GreenSize:
+            *params = static_cast<ParamType>(info->greenBits);
             break;
-        case GL_TEXTURE_GREEN_SIZE:
-            *params = CastFromGLintStateValue<ParamType>(pname, info->greenBits);
+        case TextureImageParameter::BlueSize:
+            *params = static_cast<ParamType>(info->blueBits);
             break;
-        case GL_TEXTURE_BLUE_SIZE:
-            *params = CastFromGLintStateValue<ParamType>(pname, info->blueBits);
+        case TextureImageParameter::AlphaSize:
+            *params = static_cast<ParamType>(info->alphaBits);
             break;
-        case GL_TEXTURE_ALPHA_SIZE:
-            *params = CastFromGLintStateValue<ParamType>(pname, info->alphaBits);
+        case TextureImageParameter::DepthSize:
+            *params = static_cast<ParamType>(info->depthBits);
             break;
-        case GL_TEXTURE_DEPTH_SIZE:
-            *params = CastFromGLintStateValue<ParamType>(pname, info->depthBits);
+        case TextureImageParameter::StencilSize:
+            *params = static_cast<ParamType>(info->stencilBits);
             break;
-        case GL_TEXTURE_STENCIL_SIZE:
-            *params = CastFromGLintStateValue<ParamType>(pname, info->stencilBits);
+        case TextureImageParameter::SharedSize:
+            *params = static_cast<ParamType>(info->sharedBits);
             break;
-        case GL_TEXTURE_SHARED_SIZE:
-            *params = CastFromGLintStateValue<ParamType>(pname, info->sharedBits);
+        case TextureImageParameter::RedType:
+            *params = static_cast<ParamType>(info->redBits != 0 ? info->componentType : GL_NONE);
             break;
-        case GL_TEXTURE_INTERNAL_FORMAT:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, info->internalFormat ? info->internalFormat : GL_RGBA);
+        case TextureImageParameter::GreenType:
+            *params = static_cast<ParamType>(info->greenBits != 0 ? info->componentType : GL_NONE);
             break;
-        case GL_TEXTURE_WIDTH:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, static_cast<uint32_t>(texture->getWidth(target, level)));
+        case TextureImageParameter::BlueType:
+            *params = static_cast<ParamType>(info->blueBits != 0 ? info->componentType : GL_NONE);
             break;
-        case GL_TEXTURE_HEIGHT:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, static_cast<uint32_t>(texture->getHeight(target, level)));
+        case TextureImageParameter::AlphaType:
+            *params = static_cast<ParamType>(info->alphaBits != 0 ? info->componentType : GL_NONE);
             break;
-        case GL_TEXTURE_DEPTH:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, static_cast<uint32_t>(texture->getDepth(target, level)));
+        case TextureImageParameter::DepthType:
+            *params = static_cast<ParamType>(info->depthBits != 0 ? info->componentType : GL_NONE);
             break;
-        case GL_TEXTURE_SAMPLES:
-            *params = CastFromStateValue<ParamType>(pname, texture->getSamples(target, level));
+        case TextureImageParameter::Compressed:
+            *params = static_cast<ParamType>(info->compressed);
             break;
-        case GL_TEXTURE_FIXED_SAMPLE_LOCATIONS:
-            *params = CastFromStateValue<ParamType>(
-                pname, static_cast<GLint>(texture->getFixedSampleLocations(target, level)));
+        case TextureImageParameter::Samples:
+            *params = static_cast<ParamType>(texture->getSamples(targetPacked, level));
             break;
-        case GL_TEXTURE_COMPRESSED:
-            *params = CastFromStateValue<ParamType>(pname, static_cast<GLint>(info->compressed));
+        case TextureImageParameter::FixedSampleLocations:
+            *params = static_cast<ParamType>(texture->getFixedSampleLocations(targetPacked, level));
             break;
-        case GL_MEMORY_SIZE_ANGLE:
-            *params =
-                CastFromStateValue<ParamType>(pname, texture->getLevelMemorySize(target, level));
+        case TextureImageParameter::BufferDataStoreBinding:
+            *params = static_cast<ParamType>(texture->getBuffer().id().value);
             break;
-        case GL_RESOURCE_INITIALIZED_ANGLE:
-            *params = CastFromGLintStateValue<ParamType>(
-                pname, texture->initState(GL_NONE, ImageIndex::MakeFromTarget(target, level)) ==
-                           InitState::Initialized);
+        case TextureImageParameter::BufferOffset:
+            *params = clampCast<ParamType>(texture->getBuffer().getOffset());
             break;
-        case GL_TEXTURE_BUFFER_DATA_STORE_BINDING:
-            *params = CastFromStateValue<ParamType>(
-                pname, static_cast<GLint>(texture->getBuffer().id().value));
+        case TextureImageParameter::BufferSize:
+            *params = clampCast<ParamType>(GetBoundBufferAvailableSize(texture->getBuffer()));
             break;
-        case GL_TEXTURE_BUFFER_OFFSET:
-            *params = CastFromStateValue<ParamType>(
-                pname, static_cast<GLint>(texture->getBuffer().getOffset()));
+        case TextureImageParameter::MemorySize:
+            *params = clampCast<ParamType>(texture->getLevelMemorySize(targetPacked, level));
             break;
-        case GL_TEXTURE_BUFFER_SIZE:
-            *params = CastFromStateValue<ParamType>(
-                pname, static_cast<GLint>(GetBoundBufferAvailableSize(texture->getBuffer())));
+        case TextureImageParameter::ResourceInitialized:
+            *params = static_cast<ParamType>(
+                texture->initState(GL_NONE, ImageIndex::MakeFromTarget(targetPacked, level)) ==
+                InitState::Initialized);
             break;
         default:
             UNREACHABLE();
@@ -311,6 +298,9 @@ void QueryTexParameterBase(const Context *context,
         case GL_TEXTURE_MAX_LEVEL:
             *params = CastFromGLintStateValue<ParamType>(pname, texture->getMaxLevel());
             break;
+        case GL_TEXTURE_LOD_BIAS_QCOM:
+            *params = CastFromStateValue<ParamType>(pname, texture->getLodBias());
+            break;
         case GL_TEXTURE_MIN_LOD:
             *params = CastFromSpecialValue<isGLfixed, ParamType>(pname, texture->getMinLod());
             break;
@@ -350,9 +340,6 @@ void QueryTexParameterBase(const Context *context,
             break;
         case GL_TEXTURE_BORDER_COLOR:
             ConvertFromColor<isPureInteger>(texture->getBorderColor(), params);
-            break;
-        case GL_TEXTURE_NATIVE_ID_ANGLE:
-            *params = CastFromSpecialValue<isGLfixed, ParamType>(pname, texture->getNativeID());
             break;
         case GL_IMPLEMENTATION_COLOR_READ_FORMAT:
             *params = CastFromGLintStateValue<ParamType>(
@@ -479,6 +466,9 @@ void SetTexParameterBase(Context *context, Texture *texture, GLenum pname, const
             texture->setMaxLevel(context,
                                  clampCast<GLuint>(CastQueryValueTo<GLint>(pname, params[0])));
             break;
+        case GL_TEXTURE_LOD_BIAS_QCOM:
+            texture->setLodBias(context, CastQueryValueTo<GLfloat>(pname, params[0]));
+            break;
         case GL_TEXTURE_MIN_LOD:
             texture->setMinLod(context, CastQueryValueTo<GLfloat>(pname, params[0]));
             break;
@@ -535,45 +525,53 @@ void SetTexParameterBase(Context *context, Texture *texture, GLenum pname, const
 }
 
 template <bool isPureInteger, typename ParamType>
-void QuerySamplerParameterBase(const Sampler *sampler, GLenum pname, ParamType *params)
+void QuerySamplerParameterBase(const Sampler *sampler,
+                               SamplerParameter pnamePacked,
+                               ParamType *params)
 {
-    switch (pname)
+    switch (pnamePacked)
     {
-        case GL_TEXTURE_MIN_FILTER:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getMinFilter());
+        case SamplerParameter::MagFilter:
+            *params = static_cast<ParamType>(sampler->getMagFilter());
             break;
-        case GL_TEXTURE_MAG_FILTER:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getMagFilter());
+        case SamplerParameter::MinFilter:
+            *params = static_cast<ParamType>(sampler->getMinFilter());
             break;
-        case GL_TEXTURE_WRAP_S:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getWrapS());
+        case SamplerParameter::WrapS:
+            *params = static_cast<ParamType>(sampler->getWrapS());
             break;
-        case GL_TEXTURE_WRAP_T:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getWrapT());
+        case SamplerParameter::WrapT:
+            *params = static_cast<ParamType>(sampler->getWrapT());
             break;
-        case GL_TEXTURE_WRAP_R:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getWrapR());
+        case SamplerParameter::WrapR:
+            *params = static_cast<ParamType>(sampler->getWrapR());
             break;
-        case GL_TEXTURE_MAX_ANISOTROPY_EXT:
-            *params = CastFromStateValue<ParamType>(pname, sampler->getMaxAnisotropy());
+        case SamplerParameter::MinLod:
+            // TODO(http://anglebug.com/487944776): remove the first parameter
+            *params = CastFromStateValue<ParamType>(0, sampler->getMinLod());
             break;
-        case GL_TEXTURE_MIN_LOD:
-            *params = CastFromStateValue<ParamType>(pname, sampler->getMinLod());
+        case SamplerParameter::MaxLod:
+            // TODO(http://anglebug.com/487944776): remove the first parameter
+            *params = CastFromStateValue<ParamType>(0, sampler->getMaxLod());
             break;
-        case GL_TEXTURE_MAX_LOD:
-            *params = CastFromStateValue<ParamType>(pname, sampler->getMaxLod());
+        case SamplerParameter::CompareMode:
+            *params = static_cast<ParamType>(sampler->getCompareMode());
             break;
-        case GL_TEXTURE_COMPARE_MODE:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getCompareMode());
+        case SamplerParameter::CompareFunc:
+            *params = static_cast<ParamType>(sampler->getCompareFunc());
             break;
-        case GL_TEXTURE_COMPARE_FUNC:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getCompareFunc());
-            break;
-        case GL_TEXTURE_SRGB_DECODE_EXT:
-            *params = CastFromGLintStateValue<ParamType>(pname, sampler->getSRGBDecode());
-            break;
-        case GL_TEXTURE_BORDER_COLOR:
+        case SamplerParameter::BorderColor:
             ConvertFromColor<isPureInteger>(sampler->getBorderColor(), params);
+            break;
+        case SamplerParameter::MaxAnisotropy:
+            // TODO(http://anglebug.com/487944776): remove the first parameter
+            *params = CastFromStateValue<ParamType>(0, sampler->getMaxAnisotropy());
+            break;
+        case SamplerParameter::SrgbDecode:
+            *params = static_cast<ParamType>(sampler->getSRGBDecode());
+            break;
+        case SamplerParameter::LodBiasQCOM:
+            *params = CastFromStateValue<ParamType>(0, sampler->getLodBias());
             break;
         default:
             UNREACHABLE();
@@ -584,46 +582,49 @@ void QuerySamplerParameterBase(const Sampler *sampler, GLenum pname, ParamType *
 template <bool isPureInteger, typename ParamType>
 void SetSamplerParameterBase(Context *context,
                              Sampler *sampler,
-                             GLenum pname,
+                             SamplerParameter pnamePacked,
                              const ParamType *params)
 {
-    switch (pname)
+    switch (pnamePacked)
     {
-        case GL_TEXTURE_WRAP_S:
-            sampler->setWrapS(context, ConvertToGLenum(pname, params[0]));
+        case SamplerParameter::MagFilter:
+            sampler->setMagFilter(context, ConvertToGLenum(params[0]));
             break;
-        case GL_TEXTURE_WRAP_T:
-            sampler->setWrapT(context, ConvertToGLenum(pname, params[0]));
+        case SamplerParameter::MinFilter:
+            sampler->setMinFilter(context, ConvertToGLenum(params[0]));
             break;
-        case GL_TEXTURE_WRAP_R:
-            sampler->setWrapR(context, ConvertToGLenum(pname, params[0]));
+        case SamplerParameter::WrapS:
+            sampler->setWrapS(context, ConvertToGLenum(params[0]));
             break;
-        case GL_TEXTURE_MIN_FILTER:
-            sampler->setMinFilter(context, ConvertToGLenum(pname, params[0]));
+        case SamplerParameter::WrapT:
+            sampler->setWrapT(context, ConvertToGLenum(params[0]));
             break;
-        case GL_TEXTURE_MAG_FILTER:
-            sampler->setMagFilter(context, ConvertToGLenum(pname, params[0]));
+        case SamplerParameter::WrapR:
+            sampler->setWrapR(context, ConvertToGLenum(params[0]));
             break;
-        case GL_TEXTURE_MAX_ANISOTROPY_EXT:
-            sampler->setMaxAnisotropy(context, CastQueryValueTo<GLfloat>(pname, params[0]));
+        case SamplerParameter::MinLod:
+            sampler->setMinLod(context, static_cast<GLfloat>(params[0]));
             break;
-        case GL_TEXTURE_COMPARE_MODE:
-            sampler->setCompareMode(context, ConvertToGLenum(pname, params[0]));
+        case SamplerParameter::MaxLod:
+            sampler->setMaxLod(context, static_cast<GLfloat>(params[0]));
             break;
-        case GL_TEXTURE_COMPARE_FUNC:
-            sampler->setCompareFunc(context, ConvertToGLenum(pname, params[0]));
+        case SamplerParameter::CompareMode:
+            sampler->setCompareMode(context, ConvertToGLenum(params[0]));
             break;
-        case GL_TEXTURE_MIN_LOD:
-            sampler->setMinLod(context, CastQueryValueTo<GLfloat>(pname, params[0]));
+        case SamplerParameter::CompareFunc:
+            sampler->setCompareFunc(context, ConvertToGLenum(params[0]));
             break;
-        case GL_TEXTURE_MAX_LOD:
-            sampler->setMaxLod(context, CastQueryValueTo<GLfloat>(pname, params[0]));
-            break;
-        case GL_TEXTURE_SRGB_DECODE_EXT:
-            sampler->setSRGBDecode(context, ConvertToGLenum(pname, params[0]));
-            break;
-        case GL_TEXTURE_BORDER_COLOR:
+        case SamplerParameter::BorderColor:
             sampler->setBorderColor(context, ConvertToColor<isPureInteger>(params));
+            break;
+        case SamplerParameter::MaxAnisotropy:
+            sampler->setMaxAnisotropy(context, static_cast<GLfloat>(params[0]));
+            break;
+        case SamplerParameter::SrgbDecode:
+            sampler->setSRGBDecode(context, ConvertToGLenum(params[0]));
+            break;
+        case SamplerParameter::LodBiasQCOM:
+            sampler->setLodBias(context, static_cast<GLfloat>(params[0]));
             break;
         default:
             UNREACHABLE();
@@ -1019,33 +1020,27 @@ GLenum GetUniformPropertyEnum(GLenum prop)
     }
 }
 
-GLenum GetUniformBlockPropertyEnum(GLenum prop)
+GLenum GetUniformBlockPropertyEnum(UniformBlockParameter pnamePacked)
 {
-    switch (prop)
+    switch (pnamePacked)
     {
-        case GL_UNIFORM_BLOCK_BINDING:
+        case UniformBlockParameter::Binding:
             return GL_BUFFER_BINDING;
-
-        case GL_UNIFORM_BLOCK_DATA_SIZE:
+        case UniformBlockParameter::DataSize:
             return GL_BUFFER_DATA_SIZE;
-
-        case GL_UNIFORM_BLOCK_NAME_LENGTH:
+        case UniformBlockParameter::NameLength:
             return GL_NAME_LENGTH;
-
-        case GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS:
+        case UniformBlockParameter::ActiveUniforms:
             return GL_NUM_ACTIVE_VARIABLES;
-
-        case GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES:
+        case UniformBlockParameter::ActiveUniformIndices:
             return GL_ACTIVE_VARIABLES;
-
-        case GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER:
+        case UniformBlockParameter::ReferencedByVertexShader:
             return GL_REFERENCED_BY_VERTEX_SHADER;
-
-        case GL_UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER:
+        case UniformBlockParameter::ReferencedByFragmentShader:
             return GL_REFERENCED_BY_FRAGMENT_SHADER;
-
         default:
-            return prop;
+            UNREACHABLE();
+            return 0;
     }
 }
 
@@ -1556,22 +1551,31 @@ void QueryRenderbufferiv(const Context *context,
     }
 }
 
-void QueryShaderiv(const Context *context, Shader *shader, GLenum pname, GLint *params)
+void QueryShaderiv(const Context *context,
+                   Shader *shader,
+                   ShaderParameter pnamePacked,
+                   GLint *params)
 {
-    ASSERT(shader != nullptr || pname == GL_COMPLETION_STATUS_KHR);
+    ASSERT(shader != nullptr || pnamePacked == ShaderParameter::CompletionStatus);
 
-    switch (pname)
+    switch (pnamePacked)
     {
-        case GL_SHADER_TYPE:
+        case ShaderParameter::ShaderType:
             *params = static_cast<GLint>(ToGLenum(shader->getType()));
-            return;
-        case GL_DELETE_STATUS:
-            *params = shader->isFlaggedForDeletion();
-            return;
-        case GL_COMPILE_STATUS:
+            break;
+        case ShaderParameter::DeleteStatus:
+            *params = shader->isFlaggedForDeletion() ? GL_TRUE : GL_FALSE;
+            break;
+        case ShaderParameter::CompileStatus:
             *params = shader->isCompiled(context) ? GL_TRUE : GL_FALSE;
-            return;
-        case GL_COMPLETION_STATUS_KHR:
+            break;
+        case ShaderParameter::InfoLogLength:
+            *params = shader->getInfoLogLength(context);
+            break;
+        case ShaderParameter::ShaderSourceLength:
+            *params = shader->getSourceLength();
+            break;
+        case ShaderParameter::CompletionStatus:
             if (context->isContextLost())
             {
                 context->contextLostErrorOnBlockingCall(angle::EntryPoint::GLGetShaderiv);
@@ -1581,16 +1585,10 @@ void QueryShaderiv(const Context *context, Shader *shader, GLenum pname, GLint *
             {
                 *params = shader->isCompleted() ? GL_TRUE : GL_FALSE;
             }
-            return;
-        case GL_INFO_LOG_LENGTH:
-            *params = shader->getInfoLogLength(context);
-            return;
-        case GL_SHADER_SOURCE_LENGTH:
-            *params = shader->getSourceLength();
-            return;
-        case GL_TRANSLATED_SHADER_SOURCE_LENGTH_ANGLE:
+            break;
+        case ShaderParameter::TranslatedShaderSourceLength:
             *params = shader->getTranslatedSourceWithDebugInfoLength(context);
-            return;
+            break;
         default:
             UNREACHABLE();
             break;
@@ -1598,21 +1596,21 @@ void QueryShaderiv(const Context *context, Shader *shader, GLenum pname, GLint *
 }
 
 void QueryTexLevelParameterfv(const Texture *texture,
-                              TextureTarget target,
+                              TextureTarget targetPacked,
                               GLint level,
-                              GLenum pname,
+                              TextureImageParameter pnamePacked,
                               GLfloat *params)
 {
-    QueryTexLevelParameterBase(texture, target, level, pname, params);
+    QueryTexLevelParameterBase(texture, targetPacked, level, pnamePacked, params);
 }
 
 void QueryTexLevelParameteriv(const Texture *texture,
-                              TextureTarget target,
+                              TextureTarget targetPacked,
                               GLint level,
-                              GLenum pname,
+                              TextureImageParameter pnamePacked,
                               GLint *params)
 {
-    QueryTexLevelParameterBase(texture, target, level, pname, params);
+    QueryTexLevelParameterBase(texture, targetPacked, level, pnamePacked, params);
 }
 
 void QueryTexParameterfv(const Context *context,
@@ -1655,24 +1653,24 @@ void QueryTexParameterIuiv(const Context *context,
     QueryTexParameterBase<true, false>(context, texture, pname, params);
 }
 
-void QuerySamplerParameterfv(const Sampler *sampler, GLenum pname, GLfloat *params)
+void QuerySamplerParameterfv(const Sampler *sampler, SamplerParameter pnamePacked, GLfloat *params)
 {
-    QuerySamplerParameterBase<false>(sampler, pname, params);
+    QuerySamplerParameterBase<false>(sampler, pnamePacked, params);
 }
 
-void QuerySamplerParameteriv(const Sampler *sampler, GLenum pname, GLint *params)
+void QuerySamplerParameteriv(const Sampler *sampler, SamplerParameter pnamePacked, GLint *params)
 {
-    QuerySamplerParameterBase<false>(sampler, pname, params);
+    QuerySamplerParameterBase<false>(sampler, pnamePacked, params);
 }
 
-void QuerySamplerParameterIiv(const Sampler *sampler, GLenum pname, GLint *params)
+void QuerySamplerParameterIiv(const Sampler *sampler, SamplerParameter pnamePacked, GLint *params)
 {
-    QuerySamplerParameterBase<true>(sampler, pname, params);
+    QuerySamplerParameterBase<true>(sampler, pnamePacked, params);
 }
 
-void QuerySamplerParameterIuiv(const Sampler *sampler, GLenum pname, GLuint *params)
+void QuerySamplerParameterIuiv(const Sampler *sampler, SamplerParameter pnamePacked, GLuint *params)
 {
-    QuerySamplerParameterBase<true>(sampler, pname, params);
+    QuerySamplerParameterBase<true>(sampler, pnamePacked, params);
 }
 
 void QueryVertexAttribfv(const VertexAttribute &attrib,
@@ -1695,20 +1693,6 @@ void QueryVertexAttribiv(const VertexAttribute &attrib,
 {
     QueryVertexAttribBase(attrib, binding, buffer, currentValueData.Values.FloatValues, pname,
                           params);
-}
-
-void QueryVertexAttribPointerv(const VertexAttribute &attrib, GLenum pname, void **pointer)
-{
-    switch (pname)
-    {
-        case GL_VERTEX_ATTRIB_ARRAY_POINTER:
-            *pointer = const_cast<void *>(attrib.pointer);
-            break;
-
-        default:
-            UNREACHABLE();
-            break;
-    }
 }
 
 void QueryVertexAttribIiv(const VertexAttribute &attrib,
@@ -1734,13 +1718,14 @@ void QueryVertexAttribIuiv(const VertexAttribute &attrib,
 }
 
 void QueryActiveUniformBlockiv(const Program *program,
-                               UniformBlockIndex uniformBlockIndex,
-                               GLenum pname,
+                               UniformBlockIndex uniformBlockIndexPacked,
+                               UniformBlockParameter pnamePacked,
+                               GLsizei *length,
                                GLint *params)
 {
-    GLenum prop = GetUniformBlockPropertyEnum(pname);
-    QueryProgramResourceiv(program, GL_UNIFORM_BLOCK, uniformBlockIndex, 1, &prop,
-                           std::numeric_limits<GLsizei>::max(), nullptr, params);
+    const GLenum prop = GetUniformBlockPropertyEnum(pnamePacked);
+    QueryProgramResourceiv(program, GL_UNIFORM_BLOCK, uniformBlockIndexPacked, 1, &prop,
+                           std::numeric_limits<GLsizei>::max(), length, params);
 }
 
 void QueryInternalFormativ(const Context *context,
@@ -1795,28 +1780,30 @@ void QueryInternalFormativ(const Context *context,
     }
 }
 
-void QueryFramebufferParameteriv(const Framebuffer *framebuffer, GLenum pname, GLint *params)
+void QueryFramebufferParameteriv(const Framebuffer *framebuffer,
+                                 FramebufferParameter pnamePacked,
+                                 GLint *params)
 {
-    ASSERT(framebuffer);
+    ASSERT(framebuffer != nullptr);
 
-    switch (pname)
+    switch (pnamePacked)
     {
-        case GL_FRAMEBUFFER_DEFAULT_WIDTH:
+        case FramebufferParameter::DefaultWidth:
             *params = framebuffer->getDefaultWidth();
             break;
-        case GL_FRAMEBUFFER_DEFAULT_HEIGHT:
+        case FramebufferParameter::DefaultHeight:
             *params = framebuffer->getDefaultHeight();
             break;
-        case GL_FRAMEBUFFER_DEFAULT_SAMPLES:
-            *params = framebuffer->getDefaultSamples();
-            break;
-        case GL_FRAMEBUFFER_DEFAULT_FIXED_SAMPLE_LOCATIONS:
-            *params = ConvertToGLBoolean(framebuffer->getDefaultFixedSampleLocations());
-            break;
-        case GL_FRAMEBUFFER_DEFAULT_LAYERS_EXT:
+        case FramebufferParameter::DefaultLayers:
             *params = framebuffer->getDefaultLayers();
             break;
-        case GL_FRAMEBUFFER_FLIP_Y_MESA:
+        case FramebufferParameter::DefaultSamples:
+            *params = framebuffer->getDefaultSamples();
+            break;
+        case FramebufferParameter::DefaultFixedSampleLocations:
+            *params = ConvertToGLBoolean(framebuffer->getDefaultFixedSampleLocations());
+            break;
+        case FramebufferParameter::FlipY:
             *params = ConvertToGLBoolean(framebuffer->getFlipY());
             break;
         default:
@@ -1828,30 +1815,31 @@ void QueryFramebufferParameteriv(const Framebuffer *framebuffer, GLenum pname, G
 template <typename ParamType>
 void QueryFramebufferPixelLocalStorageParameterBase(Context *context,
                                                     GLint plane,
-                                                    GLenum pname,
+                                                    PlaneParameter pnamePacked,
                                                     GLsizei *length,
                                                     ParamType *params)
 {
     const PixelLocalStoragePlane &planeObject =
         context->getState().getDrawFramebuffer()->getPixelLocalStorage(context).getPlane(plane);
-    switch (pname)
+    switch (pnamePacked)
     {
-        case GL_PIXEL_LOCAL_FORMAT_ANGLE:
-        case GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE:
-        case GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE:
-        case GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE:
-            if (length != nullptr)
-            {
-                *length = 1;
-            }
-            *params = clampCast<ParamType>(planeObject.getIntegeri(pname));
+        case PlaneParameter::InternalFormat:
+            *params = clampCast<ParamType>(planeObject.getInternalformat());
             break;
-        case GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE:
+        case PlaneParameter::TextureName:
+            *params = clampCast<ParamType>(planeObject.getTextureName());
+            break;
+        case PlaneParameter::TextureLevel:
+            *params = clampCast<ParamType>(planeObject.getTextureLevel());
+            break;
+        case PlaneParameter::TextureLayer:
+            *params = clampCast<ParamType>(planeObject.getTextureLayer());
+            break;
+        case PlaneParameter::Usage:
+            *params = clampCast<ParamType>(planeObject.getUsage());
+            break;
+        case PlaneParameter::ClearValueFloat:
         {
-            if (length != nullptr)
-            {
-                *length = 4;
-            }
             GLfloat p[4];
             planeObject.getClearValuef(p);
             params[0] = clampCast<ParamType>(p[0]);
@@ -1860,12 +1848,8 @@ void QueryFramebufferPixelLocalStorageParameterBase(Context *context,
             params[3] = clampCast<ParamType>(p[3]);
             break;
         }
-        case GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE:
+        case PlaneParameter::ClearValueInt:
         {
-            if (length != nullptr)
-            {
-                *length = 4;
-            }
             GLint p[4];
             planeObject.getClearValuei(p);
             params[0] = clampCast<ParamType>(p[0]);
@@ -1874,50 +1858,62 @@ void QueryFramebufferPixelLocalStorageParameterBase(Context *context,
             params[3] = clampCast<ParamType>(p[3]);
             break;
         }
-        case GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE:
+        case PlaneParameter::ClearValueUnsignedInt:
         {
-            if (length != nullptr)
-            {
-                *length = 4;
-            }
-            // There is no unsigned int PLS state query
-            if constexpr (std::numeric_limits<ParamType>::is_integer)
-            {
-                planeObject.getClearValueui(reinterpret_cast<GLuint *>(params));
-            }
-            else
-            {
-                GLuint p[4];
-                planeObject.getClearValueui(p);
-                params[0] = clampCast<ParamType>(p[0]);
-                params[1] = clampCast<ParamType>(p[1]);
-                params[2] = clampCast<ParamType>(p[2]);
-                params[3] = clampCast<ParamType>(p[3]);
-            }
+            GLuint p[4];
+            planeObject.getClearValueui(p);
+            params[0] = clampCast<ParamType>(p[0]);
+            params[1] = clampCast<ParamType>(p[1]);
+            params[2] = clampCast<ParamType>(p[2]);
+            params[3] = clampCast<ParamType>(p[3]);
             break;
         }
         default:
             UNREACHABLE();
             break;
     }
+
+    if (length != nullptr)
+    {
+        switch (pnamePacked)
+        {
+            case PlaneParameter::ClearValueFloat:
+            case PlaneParameter::ClearValueInt:
+            case PlaneParameter::ClearValueUnsignedInt:
+                *length = 4;
+                break;
+            default:
+                *length = 1;
+                break;
+        }
+    }
 }
 
 void QueryFramebufferPixelLocalStorageParameterfv(Context *context,
                                                   GLint plane,
-                                                  GLenum pname,
+                                                  PlaneParameter pnamePacked,
                                                   GLsizei *length,
                                                   GLfloat *params)
 {
-    QueryFramebufferPixelLocalStorageParameterBase(context, plane, pname, length, params);
+    QueryFramebufferPixelLocalStorageParameterBase(context, plane, pnamePacked, length, params);
 }
 
 void QueryFramebufferPixelLocalStorageParameteriv(Context *context,
                                                   GLint plane,
-                                                  GLenum pname,
+                                                  PlaneParameter pnamePacked,
                                                   GLsizei *length,
                                                   GLint *params)
 {
-    QueryFramebufferPixelLocalStorageParameterBase(context, plane, pname, length, params);
+    QueryFramebufferPixelLocalStorageParameterBase(context, plane, pnamePacked, length, params);
+}
+
+void QueryFramebufferPixelLocalStorageParameteruiv(Context *context,
+                                                   GLint plane,
+                                                   PlaneParameter pnamePacked,
+                                                   GLsizei *length,
+                                                   GLuint *params)
+{
+    QueryFramebufferPixelLocalStorageParameterBase(context, plane, pnamePacked, length, params);
 }
 
 angle::Result QuerySynciv(const Context *context,
@@ -1958,7 +1954,11 @@ angle::Result QuerySynciv(const Context *context,
             }
             else
             {
-                ANGLE_TRY(sync->getStatus(context, values));
+                // Do not pass |values| directly to the backend, as that is in user-controlled
+                // memory and the backend may access it multiple times in this call.
+                GLint result = GL_UNSIGNALED;
+                ANGLE_TRY(sync->getStatus(context, &result));
+                *values = result;
             }
             break;
 
@@ -2015,61 +2015,63 @@ void SetTexParameterIuiv(Context *context, Texture *texture, GLenum pname, const
     SetTexParameterBase<true, false>(context, texture, pname, params);
 }
 
-void SetSamplerParameterf(Context *context, Sampler *sampler, GLenum pname, GLfloat param)
+void SetSamplerParameterfv(Context *context,
+                           Sampler *sampler,
+                           SamplerParameter pnamePacked,
+                           const GLfloat *params)
 {
-    SetSamplerParameterBase<false>(context, sampler, pname, &param);
+    SetSamplerParameterBase<false>(context, sampler, pnamePacked, params);
 }
 
-void SetSamplerParameterfv(Context *context, Sampler *sampler, GLenum pname, const GLfloat *params)
+void SetSamplerParameteriv(Context *context,
+                           Sampler *sampler,
+                           SamplerParameter pnamePacked,
+                           const GLint *params)
 {
-    SetSamplerParameterBase<false>(context, sampler, pname, params);
+    SetSamplerParameterBase<false>(context, sampler, pnamePacked, params);
 }
 
-void SetSamplerParameteri(Context *context, Sampler *sampler, GLenum pname, GLint param)
+void SetSamplerParameterIiv(Context *context,
+                            Sampler *sampler,
+                            SamplerParameter pnamePacked,
+                            const GLint *params)
 {
-    SetSamplerParameterBase<false>(context, sampler, pname, &param);
+    SetSamplerParameterBase<true>(context, sampler, pnamePacked, params);
 }
 
-void SetSamplerParameteriv(Context *context, Sampler *sampler, GLenum pname, const GLint *params)
+void SetSamplerParameterIuiv(Context *context,
+                             Sampler *sampler,
+                             SamplerParameter pnamePacked,
+                             const GLuint *params)
 {
-    SetSamplerParameterBase<false>(context, sampler, pname, params);
-}
-
-void SetSamplerParameterIiv(Context *context, Sampler *sampler, GLenum pname, const GLint *params)
-{
-    SetSamplerParameterBase<true>(context, sampler, pname, params);
-}
-
-void SetSamplerParameterIuiv(Context *context, Sampler *sampler, GLenum pname, const GLuint *params)
-{
-    SetSamplerParameterBase<true>(context, sampler, pname, params);
+    SetSamplerParameterBase<true>(context, sampler, pnamePacked, params);
 }
 
 void SetFramebufferParameteri(const Context *context,
                               Framebuffer *framebuffer,
-                              GLenum pname,
+                              FramebufferParameter pnamePacked,
                               GLint param)
 {
-    ASSERT(framebuffer);
+    ASSERT(framebuffer != nullptr);
 
-    switch (pname)
+    switch (pnamePacked)
     {
-        case GL_FRAMEBUFFER_DEFAULT_WIDTH:
+        case FramebufferParameter::DefaultWidth:
             framebuffer->setDefaultWidth(context, param);
             break;
-        case GL_FRAMEBUFFER_DEFAULT_HEIGHT:
+        case FramebufferParameter::DefaultHeight:
             framebuffer->setDefaultHeight(context, param);
             break;
-        case GL_FRAMEBUFFER_DEFAULT_SAMPLES:
-            framebuffer->setDefaultSamples(context, param);
-            break;
-        case GL_FRAMEBUFFER_DEFAULT_FIXED_SAMPLE_LOCATIONS:
-            framebuffer->setDefaultFixedSampleLocations(context, ConvertToBool(param));
-            break;
-        case GL_FRAMEBUFFER_DEFAULT_LAYERS_EXT:
+        case FramebufferParameter::DefaultLayers:
             framebuffer->setDefaultLayers(param);
             break;
-        case GL_FRAMEBUFFER_FLIP_Y_MESA:
+        case FramebufferParameter::DefaultSamples:
+            framebuffer->setDefaultSamples(context, param);
+            break;
+        case FramebufferParameter::DefaultFixedSampleLocations:
+            framebuffer->setDefaultFixedSampleLocations(context, ConvertToBool(param));
+            break;
+        case FramebufferParameter::FlipY:
             framebuffer->setFlipY(ConvertToBool(param));
             break;
         default:
@@ -2894,6 +2896,7 @@ unsigned int GetTextureEnvParameterCount(TextureEnvParameter pname)
         case TextureEnvParameter::RgbScale:
         case TextureEnvParameter::AlphaScale:
         case TextureEnvParameter::PointCoordReplace:
+        case TextureEnvParameter::LodBias:
             return 1;
         case TextureEnvParameter::Color:
             return 4;
@@ -2914,6 +2917,7 @@ void ConvertTextureEnvFromInt(TextureEnvParameter pname, const GLint *input, GLf
     {
         case TextureEnvParameter::RgbScale:
         case TextureEnvParameter::AlphaScale:
+        case TextureEnvParameter::LodBias:
             output[0] = static_cast<GLfloat>(input[0]);
             break;
         case TextureEnvParameter::Color:
@@ -2940,6 +2944,7 @@ void ConvertTextureEnvFromFixed(TextureEnvParameter pname, const GLfixed *input,
     {
         case TextureEnvParameter::RgbScale:
         case TextureEnvParameter::AlphaScale:
+        case TextureEnvParameter::LodBias:
             output[0] = ConvertFixedToFloat(input[0]);
             break;
         case TextureEnvParameter::Color:
@@ -2966,6 +2971,7 @@ void ConvertTextureEnvToInt(TextureEnvParameter pname, const GLfloat *input, GLi
     {
         case TextureEnvParameter::RgbScale:
         case TextureEnvParameter::AlphaScale:
+        case TextureEnvParameter::LodBias:
             output[0] = static_cast<GLint>(input[0]);
             break;
         case TextureEnvParameter::Color:
@@ -2992,6 +2998,7 @@ void ConvertTextureEnvToFixed(TextureEnvParameter pname, const GLfloat *input, G
     {
         case TextureEnvParameter::RgbScale:
         case TextureEnvParameter::AlphaScale:
+        case TextureEnvParameter::LodBias:
             output[0] = ConvertFloatToFixed(input[0]);
             break;
         case TextureEnvParameter::Color:
@@ -3090,6 +3097,17 @@ void SetTextureEnv(unsigned int unit,
                     break;
             }
             break;
+        case TextureEnvTarget::TextureFilterControl:
+            switch (pname)
+            {
+                case TextureEnvParameter::LodBias:
+                    env.lodBias = params[0];
+                    break;
+                default:
+                    UNREACHABLE();
+                    break;
+            }
+            break;
         default:
             UNREACHABLE();
             break;
@@ -3173,6 +3191,17 @@ void GetTextureEnv(unsigned int unit,
             {
                 case TextureEnvParameter::PointCoordReplace:
                     *params = static_cast<GLfloat>(env.pointSpriteCoordReplace);
+                    break;
+                default:
+                    UNREACHABLE();
+                    break;
+            }
+            break;
+        case TextureEnvTarget::TextureFilterControl:
+            switch (pname)
+            {
+                case TextureEnvParameter::LodBias:
+                    *params = env.lodBias;
                     break;
                 default:
                     UNREACHABLE();
@@ -3263,43 +3292,6 @@ void GetPointSize(const GLES1State *state, GLfloat *sizeOut)
 {
     const PointParameters &params = state->pointParameters();
     *sizeOut                      = params.pointSize;
-}
-
-unsigned int GetTexParameterCount(GLenum pname)
-{
-    switch (pname)
-    {
-        case GL_TEXTURE_CROP_RECT_OES:
-        case GL_TEXTURE_BORDER_COLOR:
-            return 4;
-        case GL_TEXTURE_MAG_FILTER:
-        case GL_TEXTURE_MIN_FILTER:
-        case GL_TEXTURE_WRAP_S:
-        case GL_TEXTURE_WRAP_T:
-        case GL_TEXTURE_USAGE_ANGLE:
-        case GL_TEXTURE_MAX_ANISOTROPY_EXT:
-        case GL_TEXTURE_IMMUTABLE_FORMAT:
-        case GL_TEXTURE_WRAP_R:
-        case GL_TEXTURE_IMMUTABLE_LEVELS:
-        case GL_TEXTURE_SWIZZLE_R:
-        case GL_TEXTURE_SWIZZLE_G:
-        case GL_TEXTURE_SWIZZLE_B:
-        case GL_TEXTURE_SWIZZLE_A:
-        case GL_TEXTURE_BASE_LEVEL:
-        case GL_TEXTURE_MAX_LEVEL:
-        case GL_TEXTURE_MIN_LOD:
-        case GL_TEXTURE_MAX_LOD:
-        case GL_TEXTURE_COMPARE_MODE:
-        case GL_TEXTURE_COMPARE_FUNC:
-        case GL_TEXTURE_SRGB_DECODE_EXT:
-        case GL_DEPTH_STENCIL_TEXTURE_MODE:
-        case GL_TEXTURE_NATIVE_ID_ANGLE:
-        case GL_REQUIRED_TEXTURE_IMAGE_UNITS_OES:
-        case GL_RENDERABILITY_VALIDATION_ANGLE:
-            return 1;
-        default:
-            return 0;
-    }
 }
 
 bool GetQueryParameterInfo(const State &glState,
@@ -3573,19 +3565,11 @@ bool GetQueryParameterInfo(const State &glState,
             {
                 return false;
             }
-            *type      = GL_INT_64_ANGLEX;
+            *type      = GL_INT64;
             *numParams = 1;
             return true;
         case GL_GPU_DISJOINT_EXT:
             if (!extensions.disjointTimerQueryEXT)
-            {
-                return false;
-            }
-            *type      = GL_INT;
-            *numParams = 1;
-            return true;
-        case GL_COVERAGE_MODULATION_CHROMIUM:
-            if (!extensions.framebufferMixedSamplesCHROMIUM)
             {
                 return false;
             }
@@ -3940,6 +3924,13 @@ bool GetQueryParameterInfo(const State &glState,
         return true;
     }
 
+    if (extensions.textureLodBiasEXT && pname == GL_MAX_TEXTURE_LOD_BIAS_EXT)
+    {
+        *type      = GL_FLOAT;
+        *numParams = 1;
+        return true;
+    }
+
     if (glState.getClientVersion() < Version(2, 0))
     {
         switch (pname)
@@ -4110,7 +4101,7 @@ bool GetQueryParameterInfo(const State &glState,
         case GL_MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS:
         case GL_MAX_SERVER_WAIT_TIMEOUT:
         {
-            *type      = GL_INT_64_ANGLEX;
+            *type      = GL_INT64;
             *numParams = 1;
             return true;
         }
@@ -4294,7 +4285,7 @@ bool GetQueryParameterInfo(const State &glState,
             *numParams = 1;
             return true;
         case GL_MAX_SHADER_STORAGE_BLOCK_SIZE:
-            *type      = GL_INT_64_ANGLEX;
+            *type      = GL_INT64;
             *numParams = 1;
             return true;
         case GL_SAMPLE_SHADING:
@@ -4398,7 +4389,7 @@ bool GetIndexedQueryParameterInfo(const State &glState,
         case GL_UNIFORM_BUFFER_START:
         case GL_UNIFORM_BUFFER_SIZE:
         {
-            *type      = GL_INT_64_ANGLEX;
+            *type      = GL_INT64;
             *numParams = 1;
             return true;
         }
@@ -4478,7 +4469,7 @@ bool GetIndexedQueryParameterInfo(const State &glState,
         case GL_SHADER_STORAGE_BUFFER_START:
         case GL_SHADER_STORAGE_BUFFER_SIZE:
         {
-            *type      = GL_INT_64_ANGLEX;
+            *type      = GL_INT64;
             *numParams = 1;
             return true;
         }
@@ -4776,7 +4767,7 @@ void QueryContextAttrib(const gl::Context *context, EGLint attribute, EGLint *va
     }
 }
 
-egl::Error QuerySurfaceAttrib(const Display *display,
+egl::Error QuerySurfaceAttrib(const ThreadSafeDisplay *display,
                               const gl::Context *context,
                               Surface *surface,
                               EGLint attribute,
@@ -4920,7 +4911,7 @@ egl::Error QuerySurfaceAttrib(const Display *display,
     return NoError();
 }
 
-egl::Error QuerySurfaceAttrib64KHR(const Display *display,
+egl::Error QuerySurfaceAttrib64KHR(const ThreadSafeDisplay *display,
                                    const gl::Context *context,
                                    Surface *surface,
                                    EGLint attribute,
@@ -5000,20 +4991,22 @@ egl::Error SetSurfaceAttrib(Surface *surface, EGLint attribute, EGLint value)
     return NoError();
 }
 
-Error GetSyncAttrib(Display *display, SyncID sync, EGLint attribute, EGLint *value)
+Error GetSyncAttrib(const ThreadSafeDisplay *display,
+                    const Sync *syncObject,
+                    EGLint attribute,
+                    EGLint *value)
 {
-    const egl::Sync *syncObj = display->getSync(sync);
     switch (attribute)
     {
         case EGL_SYNC_TYPE_KHR:
-            *value = syncObj->getType();
+            *value = syncObject->getType();
             return NoError();
 
         case EGL_SYNC_STATUS_KHR:
-            return syncObj->getStatus(display, value);
+            return syncObject->getStatus(display, value);
 
         case EGL_SYNC_CONDITION_KHR:
-            *value = syncObj->getCondition();
+            *value = syncObject->getCondition();
             return NoError();
 
         default:

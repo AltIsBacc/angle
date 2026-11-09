@@ -244,6 +244,14 @@ VariableId Builder::declareTempVariable(const ImmutableString &name,
     return mBuilder->declare_temp_variable(Str(name), MakeASTType(type, typeId));
 }
 
+void Builder::rescopeAsForLoopVariable(VariableId id)
+{
+    if (!mHasError)
+    {
+        mBuilder->rescope_as_for_loop_variable(id);
+    }
+}
+
 void Builder::markVariableInvariant(VariableId id)
 {
     if (!mHasError)
@@ -257,6 +265,14 @@ void Builder::markVariablePrecise(VariableId id)
     if (!mHasError)
     {
         mBuilder->mark_variable_precise(id);
+    }
+}
+
+void Builder::markTexelFetchUse(VariableId id, const angle::Span<const uint32_t> &fields)
+{
+    if (!mHasError)
+    {
+        mBuilder->mark_texel_fetch_use(id, Slice(fields));
     }
 }
 
@@ -1275,7 +1291,6 @@ void Builder::builtIn(TOperator op, size_t argCount)
         case EOpTexture2DRect:
         case EOpTexture3D:
         case EOpTextureCube:
-        case EOpTextureVideoWEBGL:
         {
             // texture() takes the sampler, coordinates and possibly a compare parameter.
             // Note that the variant with a bias parameter is given a different Op.

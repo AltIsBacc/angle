@@ -8,12 +8,14 @@ Metal and MacOS, Chrome OS, and Fuchsia support.
 
 ### Level of OpenGL ES support via backing renderers
 
-|                |  Direct3D 9   |  Direct3D 11     |   Desktop GL   |    GL ES      |  Vulkan  |    Metal      |
-|----------------|:-------------:|:----------------:|:--------------:|:-------------:|:--------:|:-------------:|
-| OpenGL ES 2.0  |    complete   |    complete      |    complete    |    complete   | complete |    complete   |
-| OpenGL ES 3.0  |               |    complete      |    complete    |    complete   | complete |    complete   |
-| OpenGL ES 3.1  |               |                  |    complete    |    complete   | complete |               |
-| OpenGL ES 3.2  |               |                  |  in progress   |  in progress  | complete |               |
+|                |  Direct3D 9   |  Direct3D 11     |   Desktop GL   |    GL ES      |  Vulkan  |    Metal      |      WebGPU       |
+|----------------|:-------------:|:----------------:|:--------------:|:-------------:|:--------:|:-------------:|:-----------------:|
+| OpenGL ES 2.0  |    complete   |    complete      |    complete    |    complete   | complete |    complete   | [in progress][WG] |
+| OpenGL ES 3.0  |               |    complete      |    complete    |    complete   | complete |    complete   |                   |
+| OpenGL ES 3.1  |               |                  |    complete    |    complete   | complete |               |                   |
+| OpenGL ES 3.2  |               |                  |  in progress   |  in progress  | complete |               |                   |
+
+[WG]: doc/WebGLOnWebGPU.md
 
 Additionally, OpenGL ES 1.1 is implemented in the front-end using OpenGL ES 3.0 features.  This
 version of the specification is thus supported on all platforms specified above that support OpenGL
@@ -27,7 +29,7 @@ ES 3.0 with [known issues][ES1].
 |-------------:|:--------------:|:--------------:|:-------------:|:-----------:|:-----------:|:--------------------:|:----------:|
 | Windows      |    complete    |    complete    |   complete    |   complete  |   complete  |                      |            |
 | Linux        |                |                |   complete    |             |   complete  |                      |            |
-| Mac OS X     |                |                |   complete    |             |             | complete [1]         |            |
+| Mac OS X     |                |                |  deprecated   |             |             | complete [1]         |            |
 | iOS          |                |                |               |             |             | complete [2]         |            |
 | Chrome OS    |                |                |               |   complete  |   planned   |                      |            |
 | Android      |                |                |               |   complete  |   complete  |                      |            |

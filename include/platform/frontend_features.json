@@ -16,6 +16,21 @@
             ]
         },
         {
+            "name": "lose_hardened_context_on_backend_error",
+            "category": "Workarounds",
+            "description": [
+                "On hardened contexts, lose context if the backend generates an error"
+            ]
+        },
+        {
+            "name": "disallow_non_zero_base_level_and_incompatible_levels_on_hardened_contexts",
+            "category": "Workarounds",
+            "description": [
+                "On hardened contexts, disallow redeclaring mutable texture levels incompatibly and changing ",
+                "the base level to something other than zero"
+            ]
+        },
+        {
             "name": "disable_program_caching_for_transform_feedback",
             "category": "Workarounds",
             "description": [
@@ -81,6 +96,14 @@
             "description": [
                 "Force-enable shader variable initialization"
             ]
+        },
+        {
+            "name": "ensure_loop_forward_progress",
+            "category": "Features",
+            "description": [
+                "Inject statements into loop bodies when needed to ensure infinite loops are not optimized out."
+            ],
+            "issue": "http://crbug.com/41486305"
         },
         {
             "name": "enable_program_binary_for_capture",
@@ -227,6 +250,14 @@
             "issue": "https://anglebug.com/398857482"
         },
         {
+            "name": "enable_create_context_backwards_compatible",
+            "category": "Features",
+            "description": [
+                "It allows the creation of a context with a requested version by exposing EGL_ANGLE_create_context_backwards_compatible."
+            ],
+            "issue": "http://issuetracker.google.com/522318550"
+        },
+        {
             "name": "clip_cull_distance_broken_with_passthrough_shaders",
             "category": "Features",
             "description": [
@@ -249,6 +280,50 @@
                 "Force every context into debug mode as if EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR was used."
             ],
             "issue": "https://anglebug.com/423956139"
+        },
+        {
+            "name": "retain_shader_debug_info",
+            "category": "Features",
+            "description": [
+                "Retain debug info in text-based compiler output."
+            ],
+            "issue": "http://anglebug.com/579047131"
+        },
+        {
+            "name": "limit_max_buffer_bytes_to_1MB",
+            "category": "Features",
+            "description": [
+                "Force a max buffer size of 1MB for testing."
+            ]
+        },
+        {
+            "name": "limit_max_texture_bytes_to_1MB",
+            "category": "Features",
+            "description": [
+                "Force a max image size of 1MB for testing."
+            ]
+        },
+        {
+            "name": "allow_extension_disable_after_non_pp_tokens",
+            "category": "Features",
+            "description": [
+                "Allow #extension ... : disable after non preprocessor tokens in WebGL."
+            ]
+        },
+        {
+            "name": "set_need_init_on_invalidation",
+            "category": "Features",
+            "description": [
+                "Set Texture's InitState to MayNeedInit inside invalidateFramebuffer or discardFramebuffer."
+            ]
+        },
+        {
+            "name": "compress_program_binary_blob",
+            "category": "Features",
+            "description": [
+                "If true, compress the blob when glGetProgramiv is used to query the binary length and",
+                "glGetProgramBinary is used to retrieve it. Also decompress the blob when glProgramBinary is called."
+            ]
         }
     ]
 }

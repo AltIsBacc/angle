@@ -50,6 +50,12 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
+    FeatureInfo forceRenderableFallbackFormat = {
+        "forceRenderableFallbackFormat",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
     FeatureInfo clampPointSize = {
         "clampPointSize",
         FeatureCategory::VulkanWorkarounds,
@@ -83,6 +89,12 @@ struct FeaturesVk : FeatureSetBase
     FeatureInfo supportsMemoryBudget = {
         "supportsMemoryBudget",
         FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo useLargeSizeForDynamicBuffers = {
+        "useLargeSizeForDynamicBuffers",
+        FeatureCategory::VulkanWorkarounds,
         &members,
     };
 
@@ -326,6 +338,12 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
+    FeatureInfo preferGPUForCopyBufferSubData = {
+        "preferGPUForCopyBufferSubData",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
     FeatureInfo persistentlyMappedBuffers = {
         "persistentlyMappedBuffers",
         FeatureCategory::VulkanFeatures,
@@ -428,6 +446,18 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
+    FeatureInfo splitCrossFormatLayeredImageCopy = {
+        "splitCrossFormatLayeredImageCopy",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
+    FeatureInfo mutableFormatForIntColorImages = {
+        "mutableFormatForIntColorImages",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
     FeatureInfo supportsImageFormatList = {
         "supportsImageFormatList",
         FeatureCategory::VulkanFeatures,
@@ -448,6 +478,12 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo destroyOldSwapchainInSharedPresentMode = {
         "destroyOldSwapchainInSharedPresentMode",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
+    FeatureInfo disableSubmitCommandsOnSyncStatusCheckForTesting = {
+        "disableSubmitCommandsOnSyncStatusCheckForTesting",
         FeatureCategory::VulkanWorkarounds,
         &members,
     };
@@ -776,6 +812,12 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
+    FeatureInfo supportsExtendedDynamicState3 = {
+        "supportsExtendedDynamicState3",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
     FeatureInfo usePrimitiveRestartEnableDynamicState = {
         "usePrimitiveRestartEnableDynamicState",
         FeatureCategory::VulkanWorkarounds,
@@ -796,6 +838,72 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo supportsLogicOpDynamicState = {
         "supportsLogicOpDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsPatchControlPointsDynamicState = {
+        "supportsPatchControlPointsDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsAlphaToCoverageEnableDynamicState = {
+        "supportsAlphaToCoverageEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsAlphaToOneEnableDynamicState = {
+        "supportsAlphaToOneEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsColorWriteMaskDynamicState = {
+        "supportsColorWriteMaskDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsDepthClampEnableDynamicState = {
+        "supportsDepthClampEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsDepthClipNegativeOneToOneDynamicState = {
+        "supportsDepthClipNegativeOneToOneDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsLineRasterizationModeDynamicState = {
+        "supportsLineRasterizationModeDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsLogicOpEnableDynamicState = {
+        "supportsLogicOpEnableDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsPolygonModeDynamicState = {
+        "supportsPolygonModeDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsRasterizationSamplesDynamicState = {
+        "supportsRasterizationSamplesDynamicState",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsSampleMaskDynamicState = {
+        "supportsSampleMaskDynamicState",
         FeatureCategory::VulkanFeatures,
         &members,
     };
@@ -832,12 +940,6 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo explicitlyEnablePerSampleShading = {
         "explicitlyEnablePerSampleShading",
-        FeatureCategory::VulkanWorkarounds,
-        &members,
-    };
-
-    FeatureInfo explicitlyCastMediumpFloatTo16Bit = {
-        "explicitlyCastMediumpFloatTo16Bit",
         FeatureCategory::VulkanWorkarounds,
         &members,
     };
@@ -902,6 +1004,12 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
+    FeatureInfo addFramebufferFetchBarrierOnUseMidRenderPass = {
+        "addFramebufferFetchBarrierOnUseMidRenderPass",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
     FeatureInfo eglColorspaceAttributePassthrough = {
         "eglColorspaceAttributePassthrough",
         FeatureCategory::VulkanFeatures,
@@ -962,8 +1070,8 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
-    FeatureInfo syncMonolithicPipelinesToBlobCache = {
-        "syncMonolithicPipelinesToBlobCache",
+    FeatureInfo syncGlobalPipelineCacheToBlobCache = {
+        "syncGlobalPipelineCacheToBlobCache",
         FeatureCategory::VulkanWorkarounds,
         &members,
     };
@@ -1019,6 +1127,12 @@ struct FeaturesVk : FeatureSetBase
     FeatureInfo supportsSwapchainMaintenance1 = {
         "supportsSwapchainMaintenance1",
         FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo swapchainDeferredMemoryAllocation = {
+        "swapchainDeferredMemoryAllocation",
+        FeatureCategory::VulkanWorkarounds,
         &members,
     };
 
@@ -1526,12 +1640,6 @@ struct FeaturesVk : FeatureSetBase
         &members,
     };
 
-    FeatureInfo supportsClipCullDistanceInGSAndTS = {
-        "supportsClipCullDistanceInGSAndTS",
-        FeatureCategory::VulkanFeatures,
-        &members,
-    };
-
     FeatureInfo supportsMaintenance9 = {
         "supportsMaintenance9",
         FeatureCategory::VulkanFeatures,
@@ -1558,12 +1666,6 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo supportsGlobalPriority = {
         "supportsGlobalPriority",
-        FeatureCategory::VulkanFeatures,
-        &members,
-    };
-
-    FeatureInfo supportsGlobalPriorityQuery = {
-        "supportsGlobalPriorityQuery",
         FeatureCategory::VulkanFeatures,
         &members,
     };
@@ -1642,6 +1744,96 @@ struct FeaturesVk : FeatureSetBase
 
     FeatureInfo simulateTileMemoryForTesting = {
         "simulateTileMemoryForTesting",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo simulateTileMemoryTransferSrcForTesting = {
+        "simulateTileMemoryTransferSrcForTesting",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsClKhrSubgroups = {
+        "supportsClKhrSubgroups",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo clBestUniformFitWGS = {
+        "clBestUniformFitWGS",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsShaderDemoteToHelperInvocation = {
+        "supportsShaderDemoteToHelperInvocation",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo avoidImageGhostOutsideRenderPass = {
+        "avoidImageGhostOutsideRenderPass",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsAmdShaderCoreProperties = {
+        "supportsAmdShaderCoreProperties",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo initializeColorAttachmentWithWhite = {
+        "initializeColorAttachmentWithWhite",
+        FeatureCategory::VulkanAppWorkarounds,
+        &members,
+    };
+
+    FeatureInfo enableAlphaChannelImages = {
+        "enableAlphaChannelImages",
+        FeatureCategory::VulkanWorkarounds,
+        &members,
+    };
+
+    FeatureInfo preferPrecomputedVertexTransform = {
+        "preferPrecomputedVertexTransform",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo debugSupportsClFp64 = {
+        "debugSupportsClFp64",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsClFp16 = {
+        "supportsClFp16",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsClFp64 = {
+        "supportsClFp64",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo supportsPipelineBinary = {
+        "supportsPipelineBinary",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo preferPipelineBinaries = {
+        "preferPipelineBinaries",
+        FeatureCategory::VulkanFeatures,
+        &members,
+    };
+
+    FeatureInfo allowPipelineBinariesForTesting = {
+        "allowPipelineBinariesForTesting",
         FeatureCategory::VulkanFeatures,
         &members,
     };

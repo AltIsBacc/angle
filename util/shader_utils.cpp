@@ -127,36 +127,6 @@ void KHRONOS_APIENTRY DebugMessageCallback(GLenum source,
         callbackChain(source, type, id, severity, length, message, gCallbackChainUserParam);
     }
 }
-
-void GetPerfCounterValue(const CounterNameToIndexMap &counterIndexMap,
-                         std::vector<angle::PerfMonitorTriplet> &triplets,
-                         const char *name,
-                         GLuint64 *counterOut)
-{
-    auto iter = counterIndexMap.find(name);
-    ASSERT(iter != counterIndexMap.end());
-    GLuint counterIndex = iter->second;
-
-    for (const angle::PerfMonitorTriplet &triplet : triplets)
-    {
-        ASSERT(triplet.group == 0);
-        if (triplet.counter == counterIndex)
-        {
-            *counterOut = triplet.value;
-            return;
-        }
-    }
-
-    // Additional logs for b/382094011
-    std::cerr << "GetPerfCounterValue missing counter: " << name << "; index: " << counterIndex
-              << "; triplets: " << std::endl;
-    for (const angle::PerfMonitorTriplet &triplet : triplets)
-    {
-        std::cerr << triplet.counter << " " << triplet.value << std::endl;
-    }
-
-    UNREACHABLE();
-}
 }  // namespace
 
 GLuint CompileShader(GLenum type, const char *source)
@@ -394,105 +364,6 @@ void EnableDebugCallback(GLDEBUGPROC callbackChain, const void *userParam)
     glDebugMessageCallbackKHR(DebugMessageCallback, reinterpret_cast<const void *>(callbackChain));
 }
 
-CounterNameToIndexMap BuildCounterNameToIndexMap()
-{
-    GLint numCounters = 0;
-    glGetPerfMonitorCountersAMD(0, &numCounters, nullptr, 0, nullptr);
-    if (glGetError() != GL_NO_ERROR)
-    {
-        std::cerr << "glGetPerfMonitorCountersAMD failed (count)" << std::endl;
-        return {};
-    }
-
-    std::vector<GLuint> counterIndexes(numCounters, 0);
-    glGetPerfMonitorCountersAMD(0, nullptr, nullptr, numCounters, counterIndexes.data());
-    if (glGetError() != GL_NO_ERROR)
-    {
-        std::cerr << "glGetPerfMonitorCountersAMD failed (data)" << std::endl;
-        return {};
-    }
-
-    CounterNameToIndexMap indexMap;
-
-    for (GLuint counterIndex : counterIndexes)
-    {
-        static constexpr size_t kBufSize = 1000;
-        char buffer[kBufSize]            = {};
-        glGetPerfMonitorCounterStringAMD(0, counterIndex, kBufSize, nullptr, buffer);
-        if (glGetError() != GL_NO_ERROR)
-        {
-            std::cerr << "glGetPerfMonitorCounterStringAMD failed" << std::endl;
-            return {};
-        }
-
-        indexMap[buffer] = counterIndex;
-    }
-
-    return indexMap;
-}
-
-std::vector<angle::PerfMonitorTriplet> GetPerfMonitorTriplets()
-{
-    GLuint resultSize = 0;
-    glGetPerfMonitorCounterDataAMD(0, GL_PERFMON_RESULT_SIZE_AMD, sizeof(GLuint), &resultSize,
-                                   nullptr);
-    if (glGetError() != GL_NO_ERROR || resultSize == 0)
-    {
-        std::cerr << "glGetPerfMonitorCounterDataAMD failed (count)" << std::endl;
-        return {};
-    }
-
-    std::vector<angle::PerfMonitorTriplet> perfResults(resultSize /
-                                                       sizeof(angle::PerfMonitorTriplet));
-    GLint bytesWritten = 0;
-    glGetPerfMonitorCounterDataAMD(
-        0, GL_PERFMON_RESULT_AMD, static_cast<GLsizei>(perfResults.size() * sizeof(perfResults[0])),
-        &perfResults.data()->group, &bytesWritten);
-
-    if (glGetError() != GL_NO_ERROR)
-    {
-        std::cerr << "glGetPerfMonitorCounterDataAMD failed (data)" << std::endl;
-        return {};
-    }
-    ASSERT(static_cast<GLuint>(bytesWritten) == resultSize);
-
-    return perfResults;
-}
-
-angle::VulkanPerfCounters GetPerfCounters(const CounterNameToIndexMap &indexMap)
-{
-    std::vector<angle::PerfMonitorTriplet> perfResults = GetPerfMonitorTriplets();
-
-    angle::VulkanPerfCounters counters;
-
-#define ANGLE_UNPACK_PERF_COUNTER(COUNTER) \
-    GetPerfCounterValue(indexMap, perfResults, #COUNTER, &counters.COUNTER);
-
-    ANGLE_VK_PERF_COUNTERS_X(ANGLE_UNPACK_PERF_COUNTER)
-
-#undef ANGLE_UNPACK_PERF_COUNTER
-
-    return counters;
-}
-
-CounterNameToValueMap BuildCounterNameToValueMap()
-{
-    CounterNameToIndexMap indexMap                     = BuildCounterNameToIndexMap();
-    std::vector<angle::PerfMonitorTriplet> perfResults = GetPerfMonitorTriplets();
-
-    CounterNameToValueMap valueMap;
-
-    for (const auto &iter : indexMap)
-    {
-        const std::string &name = iter.first;
-        GLuint index            = iter.second;
-
-        valueMap[name] = perfResults[index].value;
-    }
-
-    return valueMap;
-}
-
 namespace angle
 {
 
@@ -550,6 +421,21 @@ void main()
 })";
 }
 
+// A shader that sets gl_Position to attribute a_position, and sets gl_PointSize to 10.
+// Use for point rendering to while avoiding implementation inconsitencies wrt point
+// size.
+const char *SimpleForPoints10()
+{
+    return R"(precision highp float;
+attribute vec4 a_position;
+
+void main()
+{
+    gl_Position = a_position;
+    gl_PointSize = 10.0;
+})";
+}
+
 // A shader that simply passes through attribute a_position, setting it to gl_Position and varying
 // v_position.
 const char *Passthrough()
@@ -577,18 +463,6 @@ void main()
 {
     gl_Position = a_position;
     v_texCoord = a_position.xy * 0.5 + vec2(0.5);
-})";
-}
-
-const char *Texture2DArray()
-{
-    return R"(#version 300 es
-out vec2 v_texCoord;
-in vec4 a_position;
-void main()
-{
-    gl_Position = vec4(a_position.xy, 0.0, 1.0);
-    v_texCoord = (a_position.xy * 0.5) + 0.5;
 })";
 }
 
@@ -689,17 +563,15 @@ void main()
 })";
 }
 
-const char *Texture2DArray()
+// A shader that renders a simple gradient of red to green. Needs varying v_position.
+const char *RedGreenGradient()
 {
-    return R"(#version 300 es
-precision highp float;
-uniform highp sampler2DArray tex2DArray;
-uniform int slice;
-in vec2 v_texCoord;
-out vec4 fragColor;
+    return R"(precision highp float;
+varying vec4 v_position;
+
 void main()
 {
-    fragColor = texture(tex2DArray, vec3(v_texCoord, float(slice)));
+    gl_FragColor = vec4(v_position.xy * 0.5 + vec2(0.5), 0.0, 1.0);
 })";
 }
 
@@ -787,6 +659,18 @@ void main()
 })";
 }
 
+const char *Texture2DArray()
+{
+    return R"(#version 300 es
+out vec2 v_texCoord;
+in vec4 a_position;
+void main()
+{
+    gl_Position = vec4(a_position.xy, 0.0, 1.0);
+    v_texCoord = (a_position.xy * 0.5) + 0.5;
+})";
+}
+
 }  // namespace vs
 
 namespace fs
@@ -841,6 +725,20 @@ out vec4 my_FragColor;
 void main()
 {
     my_FragColor = textureLod(u_tex2D, v_texCoord, u_lod);
+})";
+}
+
+const char *Texture2DArray()
+{
+    return R"(#version 300 es
+precision highp float;
+uniform highp sampler2DArray tex2DArray;
+uniform int slice;
+in vec2 v_texCoord;
+out vec4 fragColor;
+void main()
+{
+    fragColor = texture(tex2DArray, vec3(v_texCoord, float(slice)));
 })";
 }
 
@@ -919,20 +817,6 @@ out vec4 my_FragColor;
 void main()
 {
     my_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
-})";
-}
-
-// A shader that renders a simple gradient of red to green. Needs varying v_position.
-const char *RedGreenGradient()
-{
-    return R"(#version 310 es
-precision highp float;
-in vec4 v_position;
-out vec4 my_FragColor;
-
-void main()
-{
-    my_FragColor = vec4(v_position.xy * 0.5 + vec2(0.5), 0.0, 1.0);
 })";
 }
 

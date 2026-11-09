@@ -95,6 +95,7 @@ def run_test(args, test_name, overwrite_expected):
         logging.info('Capture finished, comparing files')
         logging.warning('OpenCL capturing is not included in the comparison.')
         files = sorted(fn for fn in os.listdir(temp_dir))
+
         expected_dir = os.path.join(SCRIPT_DIR, 'expected')
         expected_files = sorted(fn for fn in os.listdir(expected_dir) if not fn.startswith('.'))
 
@@ -104,6 +105,12 @@ def run_test(args, test_name, overwrite_expected):
             ]
         else:
             filtered_files = expected_files
+
+        # Only compare expected results for Android specific tests (i.e., AHBs) when
+        # run on Android platforms
+        if not angle_test_util.IsAndroid():
+            filtered_files = [f for f in filtered_files if 'ExternalAHB' not in f]
+            logging.warning('External AHB capturing is not included in the comparison.')
 
         if overwrite_expected:
             for f in filtered_files:
@@ -119,8 +126,12 @@ def run_test(args, test_name, overwrite_expected):
 
         has_diffs = False
         for fn in files:
-            if not fn.startswith('CapturedTestCL'):
-                has_diffs |= diff_files(os.path.join(temp_dir, fn), os.path.join(expected_dir, fn))
+            if fn.startswith('CapturedTestCL'):
+                continue
+            # Do not expect External AHB files to be generated on non-android platforms
+            if 'ExternalAHB' in fn and not angle_test_util.IsAndroid():
+                continue
+            has_diffs |= diff_files(os.path.join(temp_dir, fn), os.path.join(expected_dir, fn))
 
         return not has_diffs
 
@@ -138,7 +149,7 @@ def main():
 
     angle_test_util.Initialize('angle_end2end_tests')
 
-    test_name = 'CapturedTest*/ES3_Vulkan'
+    test_name = 'CapturedTest*/ES3_Vulkan*'
     had_error = False
     try:
         if not run_test(args, test_name, args.overwrite_expected):

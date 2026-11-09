@@ -31,9 +31,8 @@ lucicfg.config(
         "luci/luci-scheduler.cfg",
         "luci/project.cfg",
         "luci/realms.cfg",
-        # TODO(crbug.com/475260235): Remove project.pyl once all builders are
-        # defined src-side.
-        "project.pyl",
+        # No current need for other generated files such as mixins.pyl.
+        "testing/gn_isolate_map.pyl",
     ],
     fail_on_warnings = True,
 )
@@ -61,7 +60,10 @@ luci.project(
             roles = [
                 acl.SCHEDULER_OWNER,
             ],
-            groups = "project-angle-admins",
+            groups = [
+                "project-angle-admins",
+                "project-angle-schedulers",
+            ],
         ),
         acl.entry(
             roles = [
@@ -73,6 +75,7 @@ luci.project(
     bindings = [
         luci.binding(
             roles = "role/configs.validator",
+            groups = "project-angle-committers",
             users = "angle-try-builder@chops-service-accounts.iam.gserviceaccount.com",
         ),
         luci.binding(
@@ -119,7 +122,7 @@ chromium_luci.configure_try(
 chromium_luci.configure_builders(
     os_dimension_overrides = {
         os.LINUX_DEFAULT: os.LINUX_JAMMY,
-        os.MAC_DEFAULT: os.MAC_15,
+        os.MAC_DEFAULT: "Mac-15|Mac-26",
         os.WINDOWS_DEFAULT: os.WINDOWS_10,
     },
 )
@@ -128,10 +131,31 @@ chromium_luci.configure_per_builder_outputs(
     root_dir = "builders",
 )
 
+chromium_luci.configure_targets(
+    generate_pyl_files = chromium_luci.pyl_generation_configuration(),
+)
+
 chromium_luci.configure_recipe_experiments(
     # This can be removed once all builders use the chromium-luci wrappers for
     # creating builders instead of directly calling luci.builder().
     require_builder_wrappers = False,
+)
+
+chromium_luci.configure_builder_config(
+    # The Mega CQ association is a misnomer. ANGLE does not have the Mega CQ
+    # enabled, but adding builders to this list is necessary to work around
+    # some Starlark generation checks if they do not have a trybot.
+    mega_cq_excluded_builders = [
+        "angle-android-arm64-builder-perf",
+        "angle-android-arm64-google-pixel4-perf",
+        "angle-android-arm64-google-pixel6-perf",
+        "angle-linux-x64-builder-perf",
+        "angle-linux-x64-intel-uhd630-perf",
+        "angle-linux-x64-nvidia-gtx1660-perf",
+        "angle-win-x64-builder-perf",
+        "angle-win-x64-intel-uhd630-perf",
+        "angle-win-x64-nvidia-gtx1660-perf",
+    ],
 )
 
 # Allow builders to write baselines and query ResultDB for new tests.
@@ -301,6 +325,89 @@ luci.gitiles_poller(
     schedule = "with 10s interval",
 )
 
+# CQ
+
+luci.cq(
+    status_host = "chromium-cq-status.appspot.com",
+    submit_max_burst = 4,
+    submit_burst_delay = 480 * time.second,
+    honor_gerrit_linked_accounts = True,
+)
+
+# Skip Chromium trybots on test-only CLs (Chromium does not build src/tests/).
+# Still runs if any file outside src/tests/ is modified.
+_CHROMIUM_TRY_LOCATION_FILTERS = [
+    cq.location_filter(
+        path_regexp = "src/tests/.+",
+        exclude = True,
+    ),
+]
+
+luci.cq_group(
+    name = "main",
+    watch = cq.refset(
+        "https://chromium.googlesource.com/angle/angle",
+        refs = [r"refs/heads/main"],
+    ),
+    acls = [
+        acl.entry(
+            acl.CQ_COMMITTER,
+            groups = "project-angle-submit-access",
+        ),
+        acl.entry(
+            acl.CQ_DRY_RUNNER,
+            groups = "project-angle-tryjob-access",
+        ),
+        acl.entry(
+            acl.CQ_NEW_PATCHSET_RUN_TRIGGERER,
+            groups = "project-angle-tryjob-access",
+        ),
+    ],
+    verifiers = [
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/android-angle-chromium-try",
+            location_filters = _CHROMIUM_TRY_LOCATION_FILTERS,
+        ),
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/fuchsia-angle-try",
+            location_filters = _CHROMIUM_TRY_LOCATION_FILTERS,
+        ),
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/linux-angle-chromium-try",
+            location_filters = _CHROMIUM_TRY_LOCATION_FILTERS,
+        ),
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/mac-angle-chromium-try",
+            location_filters = _CHROMIUM_TRY_LOCATION_FILTERS,
+        ),
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/tricium-clang-tidy",
+            owner_whitelist = ["project-angle-tryjob-access"],
+            experiment_percentage = 10,
+            disable_reuse = True,
+            mode_allowlist = [cq.MODE_NEW_PATCHSET_RUN],
+            location_filters = [
+                cq.location_filter(path_regexp = r".+\.h"),
+                cq.location_filter(path_regexp = r".+\.c"),
+                cq.location_filter(path_regexp = r".+\.cc"),
+                cq.location_filter(path_regexp = r".+\.cpp"),
+            ],
+        ),
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/win-angle-chromium-arm64-try",
+            location_filters = _CHROMIUM_TRY_LOCATION_FILTERS,
+        ),
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/win-angle-chromium-x64-try",
+            location_filters = _CHROMIUM_TRY_LOCATION_FILTERS,
+        ),
+        luci.cq_tryjob_verifier(
+            builder = "chromium:try/win-angle-chromium-x86-try",
+            location_filters = _CHROMIUM_TRY_LOCATION_FILTERS,
+        ),
+    ],
+)
+
 # Views
 
 consoles.console_view(
@@ -319,16 +426,16 @@ consoles.list_view(
     title = "ANGLE Try Builders",
 )
 
-luci.list_view_entry(
-    list_view = "try",
-    builder = "try/presubmit",
-)
-
 # Run other non-builder setup.
+exec("@chromium-targets//mixins.star")
+exec("//binaries.star")
+exec("//bundles.star")
+exec("//compile_targets.star")
 exec("//gn_args.star")
+exec("//mixins.star")
 exec("//recipes.star")
+exec("//tests.star")
 
 # Handle any other builders defined in other files.
-exec("//angle_v2_ci.star")
-exec("//angle_v2_try.star")
-exec("//legacy_builders.star")
+exec("//angle_ci.star")
+exec("//angle_try.star")

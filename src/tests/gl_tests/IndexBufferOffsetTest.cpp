@@ -6,10 +6,10 @@
 
 // IndexBufferOffsetTest.cpp: Test glDrawElements with an offset and an index buffer
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
+#include <array>
 
+#include "common/span.h"
+#include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 #include "util/test_utils.h"
@@ -130,7 +130,7 @@ void main()
         size_t indexDataWidth = 6 * typeWidth;
 
         std::vector<GLubyte> indexData(6 * 3 * sizeof(GLuint), 0);
-        memcpy(indexData.data() + indexDataWidth, indexDataIn, indexDataWidth);
+        ANGLE_UNSAFE_TODO(memcpy(indexData.data() + indexDataWidth, indexDataIn, indexDataWidth));
 
         GLFramebuffer elementUpdateFbo;
         GLTexture elementUpdateTex;
@@ -149,21 +149,21 @@ void main()
         {
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, indexDataWidth, indexData.data());
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indexDataWidth, indexDataWidth,
-                            indexData.data() + indexDataWidth);
+                            ANGLE_UNSAFE_TODO(indexData.data() + indexDataWidth));
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 2 * indexDataWidth, indexDataWidth,
-                            indexData.data() + 2 * indexDataWidth);
+                            ANGLE_UNSAFE_TODO(indexData.data() + 2 * indexDataWidth));
         }
         else if (updateType == UpdateType::SmallThenBigUpdate)
         {
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, 4, indexData.data());
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 4, 3 * indexDataWidth - 4,
-                            indexData.data() + 4);
+                            ANGLE_UNSAFE_TODO(indexData.data() + 4));
         }
         else if (updateType == UpdateType::BigThenSmallUpdate)
         {
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, 3 * indexDataWidth - 4, indexData.data());
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 3 * indexDataWidth - 4, 4,
-                            indexData.data() + 3 * indexDataWidth - 4);
+                            ANGLE_UNSAFE_TODO(indexData.data() + 3 * indexDataWidth - 4));
         }
         else
         {
@@ -190,20 +190,20 @@ void main()
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indexDataWidth, indexDataWidth,
                             indexData.data());
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 2 * indexDataWidth, indexDataWidth,
-                            indexData.data() + indexDataWidth);
+                            ANGLE_UNSAFE_TODO(indexData.data() + indexDataWidth));
         }
         else if (updateType == UpdateType::SmallThenBigUpdate)
         {
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indexDataWidth, 4, indexData.data());
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indexDataWidth + 4, 2 * indexDataWidth - 4,
-                            indexData.data() + 4);
+                            ANGLE_UNSAFE_TODO(indexData.data() + 4));
         }
         else if (updateType == UpdateType::BigThenSmallUpdate)
         {
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, indexDataWidth, 2 * indexDataWidth - 4,
                             indexData.data());
             glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 3 * indexDataWidth - 4, 4,
-                            indexData.data() + 2 * indexDataWidth - 4);
+                            ANGLE_UNSAFE_TODO(indexData.data() + 2 * indexDataWidth - 4));
         }
         else
         {
@@ -440,15 +440,9 @@ TEST_P(IndexBufferOffsetTest, DrawAtDifferentOffsetAlignments)
 // Uses un-aligned index buffer to draw, the draw call should be ignored
 TEST_P(IndexBufferOffsetTest, DrawAtUnAlignedIndexBuffer)
 {
-    constexpr GLushort indices[6] = {0, 1, 2, 2, 3, 0};
-    GLubyte indicesUnaligned[1 + sizeof(indices)];
-
-    /* unalign indices */
-    indicesUnaligned[0] = 0;
-    for (unsigned long i = 0; i < sizeof(indices); ++i)
-    {
-        indicesUnaligned[i + 1] = ((GLubyte *)indices)[i];
-    }
+    constexpr std::array<GLushort, 6> indices = {0, 1, 2, 2, 3, 0};
+    std::array<GLubyte, 1 + indices.size() * sizeof(GLushort)> indicesUnaligned = {0};
+    Span(indicesUnaligned).subspan(1).copy_from(as_byte_span(indices));
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -462,7 +456,7 @@ TEST_P(IndexBufferOffsetTest, DrawAtUnAlignedIndexBuffer)
 
     GLBuffer buffer;
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indicesUnaligned), indicesUnaligned,
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indicesUnaligned), indicesUnaligned.data(),
                  GL_DYNAMIC_DRAW);
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, reinterpret_cast<void *>(1));
@@ -581,6 +575,37 @@ TEST_P(IndexBufferOffsetTest, DrawArraysLineLoopFollowedByDrawElementsTriangle)
     EXPECT_GL_NO_ERROR();
 }
 
+// Draw with an index buffer offset while sourcing vertex data from client memory.
+TEST_P(IndexBufferOffsetTest, DrawAtOffsetWithClientSideVertexData)
+{
+    constexpr size_t kIndexCount = 6;
+    constexpr size_t kBufferSize = 1024;
+    constexpr size_t kOffset     = kBufferSize - kIndexCount * sizeof(GLushort);
+
+    const GLushort indexData[kIndexCount] = {0, 1, 2, 1, 2, 3};
+    std::vector<GLubyte> bufferData(kBufferSize, 0);
+    ANGLE_UNSAFE_TODO(memcpy(&bufferData[kOffset], indexData, sizeof(indexData)));
+
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, kBufferSize, bufferData.data(), GL_STATIC_DRAW);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(mProgram);
+    glUniform4f(mColorUniformLocation, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    // Source vertex data from client memory so the backend must compute the index range.
+    const GLfloat vertices[] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 1.0f};
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glVertexAttribPointer(mPositionAttributeLocation, 2, GL_FLOAT, GL_FALSE, 0, vertices);
+    glEnableVertexAttribArray(mPositionAttributeLocation);
+
+    glDrawElements(GL_TRIANGLES, kIndexCount, GL_UNSIGNED_SHORT, reinterpret_cast<void *>(kOffset));
+
+    EXPECT_PIXEL_COLOR_EQ(64, 64, GLColor::red);
+    EXPECT_GL_NO_ERROR();
+}
+
 // Uses index buffer offset and 2 drawElement calls one of the other with different counts,
 // makes sure the second drawElement call will have its data available.
 TEST_P(IndexBufferOffsetTest, DrawWithDifferentCountsSameOffset)
@@ -609,6 +634,88 @@ TEST_P(IndexBufferOffsetTest, DrawWithDifferentCountsSameOffset)
 
     // Check the down right triangle
     EXPECT_PIXEL_COLOR_EQ(getWindowWidth() - 1, getWindowHeight() - 1, GLColor::red);
+
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test that transitioning an element array buffer from GL_STATIC_DRAW to GL_DYNAMIC_DRAW
+// without an intervening draw does not leave a stale static index buffer that gets reused across
+// different index types (GL_UNSIGNED_SHORT followed by GL_UNSIGNED_BYTE).
+TEST_P(IndexBufferOffsetTest, StaticToDynamicDifferentIndexTypes)
+{
+    // 18-byte index buffer:
+    // - Offset 0 (3 GLushort): {0, 1, 2} (upper-left triangle)
+    // - Offset 6 (3 GLubyte):  {1, 2, 3} (lower-right triangle)
+    // - Offset 12 (3 GLushort, at 2 * 6): {0, 0, 0} (degenerate triangle)
+    const GLubyte indexData[18] = {
+        0, 0, 1, 0, 2, 0,  // bytes 0..5
+        1, 2, 3, 0, 0, 0,  // bytes 6..11
+        0, 0, 0, 0, 0, 0,  // bytes 12..17
+    };
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexData), nullptr, GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexData), indexData, GL_DYNAMIC_DRAW);
+
+    glUseProgram(mProgram);
+
+    glBindBuffer(GL_ARRAY_BUFFER, mVertexBuffer);
+    glVertexAttribPointer(mPositionAttributeLocation, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(mPositionAttributeLocation);
+
+    glUniform4f(mColorUniformLocation, 1.0f, 0.0f, 0.0f, 1.0f);
+    glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_SHORT, reinterpret_cast<const void *>(0));
+
+    glUniform4f(mColorUniformLocation, 0.0f, 1.0f, 0.0f, 1.0f);
+    glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_BYTE, reinterpret_cast<const void *>(6));
+
+    // Check the upper-left triangle (red) and lower-right triangle (green).
+    EXPECT_PIXEL_COLOR_EQ(0, getWindowHeight() / 4, GLColor::red);
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() - 1, getWindowHeight() - 1, GLColor::green);
+
+    EXPECT_GL_NO_ERROR();
+}
+
+// Test that toggling GL_PRIMITIVE_RESTART_FIXED_INDEX invalidates the cached static index buffer
+// for GL_UNSIGNED_BYTE indices so 0xFF is properly re-translated between 0xFFFF and 255.
+TEST_P(IndexBufferOffsetTestES3, StaticUInt8PrimitiveRestartToggle)
+{
+    std::vector<Vector2> vertices(256, Vector2(0.0f, 0.0f));
+    vertices[0]   = Vector2(-1.0f, -1.0f);
+    vertices[1]   = Vector2(-1.0f, 1.0f);
+    vertices[2]   = Vector2(1.0f, -1.0f);
+    vertices[255] = Vector2(1.0f, 1.0f);
+
+    GLBuffer vertexBuffer;
+    glBindBuffer(GL_ARRAY_BUFFER, vertexBuffer);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vector2), vertices.data(),
+                 GL_STATIC_DRAW);
+
+    const GLubyte indexData[] = {0, 1, 2, 1, 2, 255};
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indexData), indexData, GL_STATIC_DRAW);
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(mProgram);
+    glVertexAttribPointer(mPositionAttributeLocation, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(mPositionAttributeLocation);
+
+    // First draw with primitive restart enabled populates the static index buffer, translating
+    // 255 (0xFF) to 0xFFFF.
+    glEnable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+    glUniform4f(mColorUniformLocation, 1.0f, 0.0f, 0.0f, 1.0f);
+    glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_BYTE, reinterpret_cast<const void *>(0));
+
+    // Second draw with primitive restart disabled must treat 255 as vertex index 255, not 0xFFFF.
+    glDisable(GL_PRIMITIVE_RESTART_FIXED_INDEX);
+    glUniform4f(mColorUniformLocation, 0.0f, 1.0f, 0.0f, 1.0f);
+    glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_BYTE, reinterpret_cast<const void *>(3));
+
+    EXPECT_PIXEL_COLOR_EQ(0, getWindowHeight() / 4, GLColor::red);
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() - 1, getWindowHeight() - 1, GLColor::green);
 
     EXPECT_GL_NO_ERROR();
 }

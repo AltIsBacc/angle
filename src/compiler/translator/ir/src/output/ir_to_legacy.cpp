@@ -8,6 +8,7 @@
 
 #include "compiler/translator/ir/src/output/legacy.rs.h"
 
+#include "common/hash_utils.h"
 #include "compiler/translator/BaseTypes.h"
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/ImmutableStringBuilder.h"
@@ -17,6 +18,7 @@
 #include "compiler/translator/tree_util/IntermNode_util.h"
 #include "compiler/translator/util.h"
 
+#include <anglebase/sha1.h>
 #include <vector>
 
 namespace sh
@@ -38,13 +40,43 @@ ImmutableString Str(rust::Str str)
 ImmutableString Str(const SymbolName &name)
 {
     constexpr uint32_t kNoId = 0xFFFF'FFFF;
+    constexpr uint32_t kAppendExtraChars = 1 + 11;  // underscore + 32-bit number
     const bool appendId      = name.id != kNoId;
-    ImmutableStringBuilder builder(name.name.length() + (appendId ? 1 + 11 : 0));
-    builder << ImmutableString(name.name.data(), name.name.length());
-    if (appendId)
+    const uint32_t appendExtraChars      = appendId ? kAppendExtraChars : 0;
+    // Hash length is kSHA1Length, and every byte is written as two hex characters
+    constexpr uint32_t kHashChars = 2 * angle::base::kSHA1Length;
+    ImmutableStringBuilder builder(std::max<size_t>(name.name.length(), kHashChars) +
+                                   appendExtraChars);
+    // If appending ID and the name is too long, cut off the end of the name.  The ID makes it
+    // unique anyway.
+    //
+    // Note: this is technically not true for global structs, which get appended _0 instead of _id
+    // because they might need to match between shaders.  If two structs have a very long name and
+    // they differ only in the last characters, this could cause a name collision, so long names are
+    // hashed instead; any name longer than the hash length itself risks collision, if unhashed,
+    // with a hashed name.
+    static_assert(kHashChars < kESSLMaxIdentifierLength - kAppendExtraChars);
+    if (appendId && name.id == 0 && name.name.length() > kHashChars)
     {
-        builder << '_';
-        builder << name.id;
+        angle::base::SecureHashAlgorithm hasher;
+        hasher.Init();
+        hasher.Update(name.name.data(), name.name.length());
+        hasher.Final();
+        // SAFETY: The SHA1 hasher guarantees that the returned digest is kSHA1Length bytes.
+        const std::string hashed = angle::UintStreamToHexString(
+            ANGLE_UNSAFE_BUFFERS(angle::Span(hasher.Digest(), angle::base::kSHA1Length)));
+        builder << "struct" << ImmutableString(hashed.c_str(), hashed.size()) << "_0";
+    }
+    else
+    {
+        builder << ImmutableString(
+            name.name.data(),
+            std::min<size_t>(name.name.length(), kESSLMaxIdentifierLength - appendExtraChars));
+        if (appendId)
+        {
+            builder << '_';
+            builder << name.id;
+        }
     }
     return builder;
 }
@@ -206,19 +238,19 @@ TType *make_struct_type(TCompiler *compiler,
         {
             if (fieldInfo.name == "gl_Position")
             {
-                fieldType->setQualifier(EvqPosition);
+                ASSERT(fieldType->getQualifier() == EvqPosition);
             }
             if (fieldInfo.name == "gl_PointSize")
             {
-                fieldType->setQualifier(EvqPointSize);
+                ASSERT(fieldType->getQualifier() == EvqPointSize);
             }
             if (fieldInfo.name == "gl_ClipDistance")
             {
-                fieldType->setQualifier(EvqClipDistance);
+                ASSERT(fieldType->getQualifier() == EvqClipDistance);
             }
             if (fieldInfo.name == "gl_CullDistance")
             {
-                fieldType->setQualifier(EvqCullDistance);
+                ASSERT(fieldType->getQualifier() == EvqCullDistance);
             }
         }
 
@@ -233,7 +265,14 @@ TType *make_struct_type(TCompiler *compiler,
         TInterfaceBlock *interfaceBlock =
             new TInterfaceBlock(&compiler->getSymbolTable(), Str(name), fieldList,
                                 TLayoutQualifier{}, structSymbolType);
-        compiler->getSymbolTable().redeclare(interfaceBlock);
+        if (structSymbolType == SymbolType::AngleInternal)
+        {
+            compiler->getSymbolTable().declareInternal(interfaceBlock);
+        }
+        else
+        {
+            compiler->getSymbolTable().redeclare(interfaceBlock);
+        }
         // Same with qualifier and layoutQualifier.
         return new TType(interfaceBlock, EvqTemporary, TLayoutQualifier{});
     }
@@ -362,7 +401,14 @@ TIntermTyped *make_variable(TCompiler *compiler,
             (varType->isInterfaceBlock() || IsShaderIn(varType->getQualifier()) ||
              IsShaderOut(varType->getQualifier())))
         {
-            compiler->getSymbolTable().redeclare(newVariable);
+            if (symbolType == SymbolType::AngleInternal)
+            {
+                compiler->getSymbolTable().declareInternal(newVariable);
+            }
+            else
+            {
+                compiler->getSymbolTable().redeclare(newVariable);
+            }
         }
         variable = newVariable;
     }
@@ -378,9 +424,19 @@ TIntermTyped *make_internal_variable_gl_layer_vs()
     return new TIntermSymbol(BuiltInVariable::gl_LayerVS());
 }
 
-TIntermTyped *make_internal_variable_gl_instance_es100()
+TIntermTyped *make_internal_variable_gl_instanceid_es100()
 {
     return new TIntermSymbol(BuiltInVariable::gl_InstanceID());
+}
+
+TIntermTyped *make_internal_variable_gl_instanceindex()
+{
+    return new TIntermSymbol(BuiltInVariable::gl_InstanceIndex());
+}
+
+TIntermTyped *make_internal_variable_gl_vertexindex()
+{
+    return new TIntermSymbol(BuiltInVariable::gl_VertexIndex());
 }
 
 TIntermTyped *make_nameless_block_field_variable(TCompiler *compiler,
@@ -471,6 +527,11 @@ TIntermNode *declare_function(const TFunction *function, TIntermBlock *body)
 TIntermBlock *make_interm_block()
 {
     return new TIntermBlock;
+}
+
+void append_typed_instruction_to_block(TIntermBlock *block, TIntermTyped *node)
+{
+    block->getSequence()->push_back(node);
 }
 
 void append_instructions_to_block(TIntermBlock *block, rust::Slice<TIntermNode *const> nodes)
@@ -1471,10 +1532,6 @@ TIntermTyped *built_in_texture(TCompiler *compiler,
             case EbtSampler2DShadow:
                 builtIn = isProj ? "shadow2DProjEXT" : "shadow2DEXT";
                 break;
-            case EbtSamplerVideoWEBGL:
-                ASSERT(!isProj);
-                builtIn = "textureVideoWEBGL";
-                break;
             default:
                 ASSERT(false);
         }
@@ -1655,6 +1712,56 @@ void branch_loop(TIntermBlock *block, TIntermBlock *loopConditionBlock, TIntermB
 void branch_do_loop(TIntermBlock *block, TIntermBlock *bodyBlock)
 {
     block->appendStatement(new TIntermLoop(ELoopFor, nullptr, nullptr, nullptr, bodyBlock));
+}
+
+void branch_for_loop(TIntermBlock *block,
+                     TIntermNode *loopVariableDeclaration,
+                     TIntermTyped *loopVariable,
+                     ffi::ASTForLoopConditionOp conditionOp,
+                     TIntermTyped *conditionComparator,
+                     bool ascending,
+                     TIntermTyped *incrementStep,
+                     TIntermBlock *bodyBlock)
+{
+    TOperator op;
+    switch (conditionOp)
+    {
+        case ffi::ASTForLoopConditionOp::Equal:
+            op = EOpEqual;
+            break;
+        case ffi::ASTForLoopConditionOp::NotEqual:
+            op = EOpNotEqual;
+            break;
+        case ffi::ASTForLoopConditionOp::LessThan:
+            op = EOpLessThan;
+            break;
+        case ffi::ASTForLoopConditionOp::GreaterThan:
+            op = EOpGreaterThan;
+            break;
+        case ffi::ASTForLoopConditionOp::LessThanEqual:
+            op = EOpLessThanEqual;
+            break;
+        case ffi::ASTForLoopConditionOp::GreaterThanEqual:
+            op = EOpGreaterThanEqual;
+            break;
+    }
+
+    TIntermTyped *condition =
+        new TIntermBinary(op, loopVariable->deepCopy(), conditionComparator->deepCopy());
+    TIntermTyped *expr = nullptr;
+    if (incrementStep)
+    {
+        expr = new TIntermBinary(ascending ? EOpAddAssign : EOpSubAssign, loopVariable->deepCopy(),
+                                 incrementStep->deepCopy());
+    }
+    else
+    {
+        expr = new TIntermUnary(ascending ? EOpPostIncrement : EOpPostDecrement,
+                                loopVariable->deepCopy(), nullptr);
+    }
+
+    block->appendStatement(
+        new TIntermLoop(ELoopFor, loopVariableDeclaration, condition, expr, bodyBlock));
 }
 
 void branch_loop_if(TIntermBlock *block, const Expression &condition)

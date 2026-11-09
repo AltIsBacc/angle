@@ -7,10 +7,7 @@
 //   Test EXT_blend_func_extended
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
+#include "common/span.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
 
@@ -28,7 +25,7 @@ namespace
 // Partial implementation of weight function for GLES 2 blend equation that
 // is dual-source aware.
 template <int factor, int index>
-float Weight(const float /*dst*/[4], const float src[4], const float src1[4])
+float Weight(Span<const float, 4> /*dst*/, Span<const float, 4> src, Span<const float, 4> src1)
 {
     if (factor == GL_SRC_COLOR)
         return src[index];
@@ -52,9 +49,9 @@ GLubyte ScaleChannel(float weight)
 
 // Implementation of GLES 2 blend equation that is dual-source aware.
 template <int RGBs, int RGBd, int As, int Ad>
-void BlendEquationFuncAdd(const float dst[4],
-                          const float src[4],
-                          const float src1[4],
+void BlendEquationFuncAdd(Span<const float, 4> dst,
+                          Span<const float, 4> src,
+                          Span<const float, 4> src1,
                           angle::GLColor *result)
 {
     float r[4];
@@ -827,7 +824,9 @@ void main() {
         EXPECT_EQ(0, glGetFragDataIndexEXT(mProgram, "FragData"));
         EXPECT_EQ(kFragData0Location, glGetFragDataLocation(mProgram, "FragData[0]"));
         EXPECT_EQ(0, glGetFragDataIndexEXT(mProgram, "FragData[0]"));
-        EXPECT_EQ(kFragData1Location, glGetFragDataLocation(mProgram, "FragData[1]"));
+        // Binding FragData[1] to kFragData1Location ignored because indexing is ignored.
+        // It receives the consecutive location following FragData[0] (kFragData0Location + 1).
+        EXPECT_EQ(kFragData0Location + 1, glGetFragDataLocation(mProgram, "FragData[1]"));
         EXPECT_EQ(0, glGetFragDataIndexEXT(mProgram, "FragData[1]"));
         // Index bigger than the GLSL variable array length does not find anything.
         EXPECT_EQ(-1, glGetFragDataLocation(mProgram, "FragData[3]"));
@@ -867,6 +866,40 @@ void main() {
     glBindFragDataLocationEXT(mProgram, 0, "FragData");
     glBindFragDataLocationIndexedEXT(mProgram, 0, 1, "SecondaryFragData");
     LinkProgram();
+}
+
+// Test that glBindFragDataLocationEXT and glBindFragDataLocationIndexedEXT ignores names with '['
+// unless ending with '[0]'.
+TEST_P(EXTBlendFuncExtendedDrawTestES3, BindFragDataLocationBracketReject)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_blend_func_extended"));
+
+    constexpr char kFragDataShader[] = R"(#version 300 es
+#extension GL_EXT_blend_func_extended : require
+precision mediump float;
+uniform vec4 src;
+uniform vec4 src1;
+out vec4 FragData;
+out vec4 SecondaryFragData;
+void main() {
+    FragData = src;
+    SecondaryFragData = src1;
+})";
+
+    mProgram = CompileProgram(essl3_shaders::vs::Simple(), kFragDataShader, [](GLuint program) {
+        glBindFragDataLocationEXT(program, 0, "FragData");
+        // Bind invalid names with [1] suffix or multidimensional indices (should be ignored)
+        glBindFragDataLocationEXT(program, 2, "FragData[1]");
+        glBindFragDataLocationIndexedEXT(program, 0, 1, "SecondaryFragData[1]");
+        glBindFragDataLocationEXT(program, 2, "FragData[1][0]");
+        glBindFragDataLocationIndexedEXT(program, 0, 1, "SecondaryFragData[1][0]");
+    });
+
+    LinkProgram();
+
+    EXPECT_EQ(0, glGetFragDataLocation(mProgram, "FragData"));
+    EXPECT_EQ(-1, glGetFragDataLocation(mProgram, "FragData[1]"));
+    EXPECT_EQ(-1, glGetFragDataLocation(mProgram, "FragData[1][0]"));
 }
 
 // Test an ESSL 3.00 program with a link-time fragment output location conflict.

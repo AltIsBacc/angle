@@ -12,6 +12,7 @@
 #include "common/utilities.h"
 #include "libANGLE/Config.h"
 #include "libANGLE/Context.h"
+#include "libANGLE/Display.h"
 #include "libANGLE/Renderbuffer.h"
 #include "libANGLE/Surface.h"
 #include "libANGLE/Texture.h"
@@ -214,6 +215,11 @@ GLint FramebufferAttachment::layer() const
 
     const gl::ImageIndex &index = mTarget.textureIndex();
     return (index.has3DLayer() ? index.getLayerIndex() : 0);
+}
+
+bool FramebufferAttachment::hasLayer() const
+{
+    return mTarget.textureIndex().hasLayer();
 }
 
 bool FramebufferAttachment::isLayered() const

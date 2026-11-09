@@ -55,11 +55,6 @@ static bool IsIndexedCapBannedWithActivePLS(GLenum cap)
 }
 }  // anonymous namespace
 
-bool ValidateBlendBarrier(const Context *context, angle::EntryPoint entryPoint)
-{
-    return true;
-}
-
 bool ValidateBlendEquationSeparatei(const PrivateState &state,
                                     ErrorSet *errors,
                                     angle::EntryPoint entryPoint,
@@ -188,14 +183,6 @@ bool ValidateCopyImageSubData(const Context *context,
     return ValidateCopyImageSubDataBase(context, entryPoint, srcName, srcTarget, srcLevel, srcX,
                                         srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ,
                                         srcWidth, srcHeight, srcDepth);
-}
-
-bool ValidateDebugMessageCallback(const Context *context,
-                                  angle::EntryPoint entryPoint,
-                                  GLDEBUGPROC callback,
-                                  const void *userParam)
-{
-    return true;
 }
 
 bool ValidateDebugMessageControl(const Context *context,
@@ -371,11 +358,6 @@ bool ValidateGetDebugMessageLog(const Context *context,
                                           severities, lengths, messageLog);
 }
 
-bool ValidateGetGraphicsResetStatus(const Context *context, angle::EntryPoint entryPoint)
-{
-    return true;
-}
-
 bool ValidateGetObjectLabel(const Context *context,
                             angle::EntryPoint entryPoint,
                             GLenum identifier,
@@ -446,20 +428,22 @@ bool ValidateGetPointerv(const Context *context,
 
 bool ValidateGetSamplerParameterIiv(const Context *context,
                                     angle::EntryPoint entryPoint,
-                                    SamplerID sampler,
-                                    GLenum pname,
+                                    SamplerID samplerPacked,
+                                    SamplerParameter pnamePacked,
                                     const GLint *params)
 {
-    return ValidateGetSamplerParameterBase(context, entryPoint, sampler, pname, nullptr, params);
+    return ValidateGetSamplerParameterBase(context, entryPoint, samplerPacked, pnamePacked, params,
+                                           nullptr);
 }
 
 bool ValidateGetSamplerParameterIuiv(const Context *context,
                                      angle::EntryPoint entryPoint,
-                                     SamplerID sampler,
-                                     GLenum pname,
+                                     SamplerID samplerPacked,
+                                     SamplerParameter pnamePacked,
                                      const GLuint *params)
 {
-    return ValidateGetSamplerParameterBase(context, entryPoint, sampler, pname, nullptr, params);
+    return ValidateGetSamplerParameterBase(context, entryPoint, samplerPacked, pnamePacked, params,
+                                           nullptr);
 }
 
 bool ValidateGetTexParameterIiv(const Context *context,
@@ -533,14 +517,6 @@ bool ValidateIsEnabledi(const PrivateState &state,
     return true;
 }
 
-bool ValidateMinSampleShading(const PrivateState &state,
-                              ErrorSet *errors,
-                              angle::EntryPoint entryPoint,
-                              GLfloat value)
-{
-    return true;
-}
-
 bool ValidateObjectLabel(const Context *context,
                          angle::EntryPoint entryPoint,
                          GLenum identifier,
@@ -574,21 +550,6 @@ bool ValidatePopDebugGroup(const Context *context, angle::EntryPoint entryPoint)
     return ValidatePopDebugGroupBase(context, entryPoint);
 }
 
-bool ValidatePrimitiveBoundingBox(const PrivateState &state,
-                                  ErrorSet *errors,
-                                  angle::EntryPoint entryPoint,
-                                  GLfloat minX,
-                                  GLfloat minY,
-                                  GLfloat minZ,
-                                  GLfloat minW,
-                                  GLfloat maxX,
-                                  GLfloat maxY,
-                                  GLfloat maxZ,
-                                  GLfloat maxW)
-{
-    return true;
-}
-
 bool ValidatePushDebugGroup(const Context *context,
                             angle::EntryPoint entryPoint,
                             GLenum source,
@@ -610,32 +571,26 @@ bool ValidateReadnPixels(const Context *context,
                          GLsizei bufSize,
                          const void *data)
 {
-    if (bufSize < 0)
-    {
-        ANGLE_VALIDATION_ERROR(GL_INVALID_VALUE, kNegativeBufSize);
-        return false;
-    }
-
     return ValidateReadPixelsBase(context, entryPoint, x, y, width, height, format, type, bufSize,
-                                  nullptr, nullptr, nullptr, data);
+                                  data);
 }
 
 bool ValidateSamplerParameterIiv(const Context *context,
                                  angle::EntryPoint entryPoint,
-                                 SamplerID sampler,
-                                 GLenum pname,
+                                 SamplerID samplerPacked,
+                                 SamplerParameter pnamePacked,
                                  const GLint *param)
 {
-    return ValidateSamplerParameterBase(context, entryPoint, sampler, pname, -1, true, param);
+    return ValidateSamplerParameterBase(context, entryPoint, samplerPacked, pnamePacked, param);
 }
 
 bool ValidateSamplerParameterIuiv(const Context *context,
                                   angle::EntryPoint entryPoint,
-                                  SamplerID sampler,
-                                  GLenum pname,
+                                  SamplerID samplerPacked,
+                                  SamplerParameter pnamePacked,
                                   const GLuint *param)
 {
-    return ValidateSamplerParameterBase(context, entryPoint, sampler, pname, -1, true, param);
+    return ValidateSamplerParameterBase(context, entryPoint, samplerPacked, pnamePacked, param);
 }
 
 bool ValidateTexBuffer(const Context *context,
@@ -665,7 +620,7 @@ bool ValidateTexParameterIiv(const Context *context,
                              GLenum pname,
                              const GLint *params)
 {
-    return ValidateTexParameterBase(context, entryPoint, targetPacked, pname, -1, true, params);
+    return ValidateTexParameterBase(context, entryPoint, targetPacked, pname, params);
 }
 
 bool ValidateTexParameterIuiv(const Context *context,
@@ -674,7 +629,7 @@ bool ValidateTexParameterIuiv(const Context *context,
                               GLenum pname,
                               const GLuint *params)
 {
-    return ValidateTexParameterBase(context, entryPoint, targetPacked, pname, -1, true, params);
+    return ValidateTexParameterBase(context, entryPoint, targetPacked, pname, params);
 }
 
 bool ValidateTexStorage3DMultisample(const Context *context,

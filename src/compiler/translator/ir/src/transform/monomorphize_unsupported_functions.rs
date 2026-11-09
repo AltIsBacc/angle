@@ -24,6 +24,8 @@ use crate::*;
 pub struct Options {
     // Which kind of arguments are unsupported:
     pub struct_containing_samplers: bool,
+    // http://anglebug.com/42265954: The ESSL spec has a bug with images as function arguments. The
+    // recommended workaround is to inline functions that accept image arguments.
     pub image: bool,
     pub atomic_counter: bool,
     pub array_of_array_of_sampler_or_image: bool,
@@ -144,40 +146,45 @@ fn is_unsupported_argument(ir_meta: &IRMeta, arg: TypedId, options: &Options) ->
 
     // Find the variable this argument is accessing, if any.
     let mut base_variable = arg;
-    loop {
-        match base_variable.id {
-            Id::Constant(_) => {
-                return false;
-            }
-            Id::Variable(_) => {
-                break;
-            }
-            Id::Register(id) => {
-                let instruction = ir_meta.get_instruction(id);
-                match instruction.op {
-                    OpCode::AccessStructField(base_id, _) => {
-                        if is_sampler {
-                            // A sampler is accessed through a struct if the argument passed to the
-                            // function is a sampler (array), but the access chain leading to it
-                            // selects a struct field.
-                            is_sampler_in_struct = true;
-                        }
-                        base_variable = base_id;
+    let mut is_definitely_supported = false;
+    util::trace_back(
+        ir_meta,
+        &mut is_definitely_supported,
+        base_variable.id,
+        &mut |is_definitely_supported, _| {
+            *is_definitely_supported = true;
+        },
+        &mut |_, _| {},
+        &mut |is_definitely_supported, _, opcode| {
+            match *opcode {
+                OpCode::AccessStructField(base_id, _) => {
+                    if is_sampler {
+                        // A sampler is accessed through a struct if the argument passed to the
+                        // function is a sampler (array), but the access chain leading to it
+                        // selects a struct field.
+                        is_sampler_in_struct = true;
                     }
-                    OpCode::AccessArrayElement(base_id, _) => {
-                        base_variable = base_id;
-                    }
-                    _ => {
-                        return false;
-                    }
-                };
+                    base_variable = base_id;
+                    Some(base_id.id)
+                }
+                OpCode::AccessArrayElement(base_id, _) => {
+                    base_variable = base_id;
+                    Some(base_id.id)
+                }
+                _ => {
+                    *is_definitely_supported = true;
+                    None
+                }
             }
-        }
+        },
+    );
+    if is_definitely_supported {
+        return false;
     }
 
     // Now that the variable is found, see if it's unsupported.
     let type_info = ir_meta.get_type(ir_meta.get_pointee_type(base_variable.type_id));
-    if options.array_of_array_of_sampler_or_image {
+    if options.array_of_array_of_sampler_or_image || options.struct_containing_samplers {
         // Monomorphize if:
         //
         // - The opaque uniform is a sampler in a struct (which can create an array-of-array
@@ -207,34 +214,31 @@ fn is_unsupported_argument(ir_meta: &IRMeta, arg: TypedId, options: &Options) ->
 fn get_access_chain(ir_meta: &IRMeta, id: TypedId) -> Vec<Id> {
     // Find the variable this argument is accessing, if any.
     let mut access_chain = vec![];
-    let mut access_id = id;
-    loop {
-        access_chain.push(access_id.id);
-        match access_id.id {
-            Id::Constant(_) => {
-                panic!(
-                    "Internal error: Constant argument should not cause function to monomorphize"
-                );
+    util::trace_back(
+        ir_meta,
+        &mut access_chain,
+        id.id,
+        &mut |_, _| {
+            panic!("Internal error: Constant argument should not cause function to monomorphize");
+        },
+        &mut |access_chain, variable_id| {
+            access_chain.push(Id::new_variable(variable_id));
+        },
+        &mut |access_chain, register_id, opcode| {
+            access_chain.push(Id::new_register(register_id));
+            match opcode {
+                OpCode::AccessStructField(base_id, _) | OpCode::AccessArrayElement(base_id, _) => {
+                    Some(base_id.id)
+                }
+                _ => {
+                    panic!(
+                        "Internal error: Only opaque uniforms should cause function to \
+                         monomorphize"
+                    );
+                }
             }
-            Id::Variable(_) => {
-                break;
-            }
-            Id::Register(id) => {
-                let instruction = ir_meta.get_instruction(id);
-                match instruction.op {
-                    OpCode::AccessStructField(base_id, _)
-                    | OpCode::AccessArrayElement(base_id, _) => {
-                        access_id = base_id;
-                    }
-                    _ => {
-                        panic!(
-                            "Internal error: Only opaque uniforms should cause function to monomorphize"
-                        );
-                    }
-                };
-            }
-        }
-    }
+        },
+    );
 
     access_chain
 }
@@ -322,7 +326,11 @@ struct ReplacementInfo {
     mapped_param: Id,
 }
 
-fn replace_arg(state: &mut State, preamble: &mut Block, access_chain: &[Id]) -> ReplacementInfo {
+fn replace_arg(
+    state: &mut State,
+    preamble: &mut instruction::Builder<&mut Block>,
+    access_chain: &[Id],
+) -> ReplacementInfo {
     let mut params = vec![];
     let mut args = vec![];
 
@@ -345,9 +353,9 @@ fn replace_arg(state: &mut State, preamble: &mut Block, access_chain: &[Id]) -> 
                 // the preamble.
                 let instruction = state.ir_meta.get_instruction(id);
                 pointer = match instruction.op {
-                    OpCode::AccessStructField(_, field) => preamble.add_typed_instruction(
-                        instruction::struct_field(state.ir_meta, pointer, field),
-                    ),
+                    OpCode::AccessStructField(_, field) => {
+                        preamble.struct_field(state.ir_meta, pointer, field)
+                    }
                     OpCode::AccessArrayElement(_, index) => {
                         debug_assert!(!index.id.is_variable());
                         let access_index = if index.id.is_register() {
@@ -371,17 +379,12 @@ fn replace_arg(state: &mut State, preamble: &mut Block, access_chain: &[Id]) -> 
 
                             // Load from this parameter to access the pointer inside the
                             // monomorphized function.
-                            preamble
-                                .add_typed_instruction(instruction::load(state.ir_meta, new_param))
+                            preamble.load(state.ir_meta, new_param)
                         } else {
                             index
                         };
 
-                        preamble.add_typed_instruction(instruction::index(
-                            state.ir_meta,
-                            pointer,
-                            access_index,
-                        ))
+                        preamble.index(state.ir_meta, pointer, access_index)
                     }
                     _ => {
                         panic!("Internal error: Expected AccessStructField or AccessArrayElement");
@@ -430,9 +433,10 @@ fn prepare_to_monomorphize(
     result: Option<TypedRegisterId>,
     args: Vec<TypedId>,
     unsupported_args: Vec<UnsupportedArgument>,
-    transforms: &mut Vec<traverser::Transform>,
+    builder: &mut instruction::Builder<traverser::Transforms>,
 ) -> MonomorphizedFunction {
     let mut preamble = Block::new();
+    let mut preamble_builder = instruction::Builder::<&mut Block>::new(&mut preamble);
     let function_params = state.ir_meta.get_function(function_id).params.clone();
 
     let mut unreplaced_index = 0;
@@ -454,7 +458,7 @@ fn prepare_to_monomorphize(
             );
         }
 
-        let replacement = replace_arg(state, &mut preamble, &arg.access_chain);
+        let replacement = replace_arg(state, &mut preamble_builder, &arg.access_chain);
         replacement_args.extend_from_slice(&replacement.args);
         replacement_params.extend_from_slice(&replacement.params);
         param_map.insert(function_params[arg.arg_index].variable_id, replacement.mapped_param);
@@ -481,6 +485,7 @@ fn prepare_to_monomorphize(
         replacement_params,
         function.return_type_id,
         function.return_precision,
+        function.return_precise,
         function.return_decorations.clone(),
     );
     let new_function_id = state.ir_meta.add_function(new_function);
@@ -489,21 +494,10 @@ fn prepare_to_monomorphize(
     // Replace the function call with a call to this new function.  The result, if any, uses the
     // same ID as the original.
     if let Some(result) = result {
-        traverser::add_typed_instruction(
-            transforms,
-            instruction::make_with_result_id!(
-                call,
-                state.ir_meta,
-                result,
-                new_function_id,
-                replacement_args
-            ),
-        );
+        let call = builder.call(state.ir_meta, new_function_id, replacement_args);
+        builder.alias_result(state.ir_meta, result, call);
     } else {
-        traverser::add_void_instruction(
-            transforms,
-            instruction::make!(call, state.ir_meta, new_function_id, replacement_args),
-        );
+        builder.call_void(state.ir_meta, new_function_id, replacement_args);
     }
 
     MonomorphizedFunction {
@@ -520,30 +514,30 @@ fn transform_call(
     instruction: &BlockInstruction,
     options: &Options,
     to_add: &mut Vec<MonomorphizedFunction>,
-) -> Vec<traverser::Transform> {
+) -> traverser::Transforms {
     let (op, result) = instruction.get_op_and_result(state.ir_meta);
     if let OpCode::Call(function_id, args) = op {
         let unsupported_args = get_unsupported_arguments(state.ir_meta, args, options);
         if unsupported_args.is_empty() {
             // Nothing to do.  Just visit this function later.
             add_to_process(state, *function_id);
-            return vec![];
+            return traverser::Transforms::new();
         }
 
         // Satisfy the borrow checker as we're about to mutate `state`.
         let args = args.clone();
-        let mut transforms = vec![];
+        let mut builder = instruction::Builder::<traverser::Transforms>::new();
         to_add.push(prepare_to_monomorphize(
             state,
             *function_id,
             result,
             args,
             unsupported_args,
-            &mut transforms,
+            &mut builder,
         ));
-        transforms
+        builder.finish()
     } else {
-        vec![]
+        traverser::Transforms::new()
     }
 }
 

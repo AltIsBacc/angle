@@ -7,12 +7,9 @@
 //    CPU-side storage of commands to delay GPU-side allocation until commands are submitted.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/vulkan/SecondaryCommandBuffer.h"
 #include "common/debug.h"
+#include "common/unsafe_buffers.h"
 #include "libANGLE/renderer/vulkan/vk_utils.h"
 #include "libANGLE/trace.h"
 
@@ -64,6 +61,8 @@ const char *GetCommandString(CommandID id)
             return "BlitImage";
         case CommandID::BufferBarrier:
             return "BufferBarrier";
+        case CommandID::BufferBarrier2:
+            return "BufferBarrier2";
         case CommandID::ClearAttachments:
             return "ClearAttachments";
         case CommandID::ClearColorImage:
@@ -112,16 +111,22 @@ const char *GetCommandString(CommandID id)
             return "FillBuffer";
         case CommandID::ImageBarrier:
             return "ImageBarrier";
+        case CommandID::ImageBarrier2:
+            return "ImageBarrier2";
         case CommandID::ImageWaitEvent:
             return "ImageWaitEvent";
         case CommandID::InsertDebugUtilsLabel:
             return "InsertDebugUtilsLabel";
         case CommandID::MemoryBarrier:
             return "MemoryBarrier";
+        case CommandID::MemoryBarrier2:
+            return "MemoryBarrier2";
         case CommandID::NextSubpass:
             return "NextSubpass";
         case CommandID::PipelineBarrier:
             return "PipelineBarrier";
+        case CommandID::PipelineBarrier2:
+            return "PipelineBarrier2";
         case CommandID::PushConstants:
             return "PushConstants";
         case CommandID::ResetEvent:
@@ -130,14 +135,30 @@ const char *GetCommandString(CommandID id)
             return "ResetQueryPool";
         case CommandID::ResolveImage:
             return "ResolveImage";
+        case CommandID::SetAlphaToCoverageEnable:
+            return "SetAlphaToCoverageEnable";
+        case CommandID::SetAlphaToOneEnable:
+            return "SetAlphaToOneEnable";
         case CommandID::SetBlendConstants:
             return "SetBlendConstants";
+        case CommandID::SetColorBlendAdvanced:
+            return "SetColorBlendAdvanced";
+        case CommandID::SetColorBlendEnable:
+            return "SetColorBlendEnable";
+        case CommandID::SetColorBlendEquation:
+            return "SetColorBlendEquation";
+        case CommandID::SetColorWriteMask:
+            return "SetColorWriteMask";
         case CommandID::SetCullMode:
             return "SetCullMode";
         case CommandID::SetDepthBias:
             return "SetDepthBias";
         case CommandID::SetDepthBiasEnable:
             return "SetDepthBiasEnable";
+        case CommandID::SetDepthClampEnable:
+            return "SetDepthClampEnable";
+        case CommandID::SetDepthClipNegativeOneToOne:
+            return "SetDepthClipNegativeOneToOne";
         case CommandID::SetDepthCompareOp:
             return "SetDepthCompareOp";
         case CommandID::SetDepthTestEnable:
@@ -150,16 +171,30 @@ const char *GetCommandString(CommandID id)
             return "SetFragmentShadingRate";
         case CommandID::SetFrontFace:
             return "SetFrontFace";
+        case CommandID::SetLineRasterizationMode:
+            return "SetLineRasterizationMode";
+        case CommandID::SetLineStippleEnable:
+            return "SetLineStippleEnable";
         case CommandID::SetLineWidth:
             return "SetLineWidth";
         case CommandID::SetLogicOp:
             return "SetLogicOp";
+        case CommandID::SetLogicOpEnable:
+            return "SetLogicOpEnable";
+        case CommandID::SetPatchControlPoints:
+            return "SetPatchControlPoints";
+        case CommandID::SetPolygonMode:
+            return "SetPolygonMode";
         case CommandID::SetPrimitiveRestartEnable:
             return "SetPrimitiveRestartEnable";
         case CommandID::SetPrimitiveTopology:
             return "SetPrimitiveTopology";
         case CommandID::SetRasterizerDiscardEnable:
             return "SetRasterizerDiscardEnable";
+        case CommandID::SetRasterizationSamples:
+            return "SetRasterizationSamples";
+        case CommandID::SetSampleMask:
+            return "SetSampleMask";
         case CommandID::SetScissor:
             return "SetScissor";
         case CommandID::SetStencilCompareMask:
@@ -180,10 +215,8 @@ const char *GetCommandString(CommandID id)
             return "WaitEvents";
         case CommandID::WriteTimestamp:
             return "WriteTimestamp";
-        default:
-            // Need this to work around MSVC warning 4715.
-            UNREACHABLE();
-            return "--unreachable--";
+        case CommandID::WriteTimestamp2:
+            return "WriteTimestamp2";
     }
 }
 
@@ -207,8 +240,8 @@ ANGLE_INLINE const NextT *GetNextArrayParameter(const PrevT *array, size_t array
 
 ANGLE_INLINE const CommandHeader *NextCommand(const CommandHeader *command)
 {
-    return reinterpret_cast<const CommandHeader *>(reinterpret_cast<const uint8_t *>(command) +
-                                                   command->size);
+    return reinterpret_cast<const CommandHeader *>(
+        ANGLE_UNSAFE_TODO(reinterpret_cast<const uint8_t *>(command) + command->size));
 }
 
 // Parse the cmds in this cmd buffer into given primary cmd buffer
@@ -218,6 +251,9 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
 
     ANGLE_TRACE_EVENT0("gpu.angle", "SecondaryCommandBuffer::executeCommands");
 
+    // Track all commands using single scope since tracking each command adds too much CPU overhead.
+    ScopedVulkanApiPerfTimer timer(angle::VulkanApiPerfCounterGroup::Command);
+
     for (const CommandHeader *command : mCommands)
     {
         for (const CommandHeader *currentCommand                      = command;
@@ -225,6 +261,9 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
         {
             switch (currentCommand->id)
             {
+                case CommandID::Invalid:
+                    UNREACHABLE();
+                    break;
                 case CommandID::BeginDebugUtilsLabel:
                 {
                     const DebugUtilsLabelParams *params =
@@ -251,8 +290,8 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<BeginTransformFeedbackParams>(currentCommand);
                     const VkBuffer *counterBuffers = GetFirstArrayParameter<VkBuffer>(params);
                     const VkDeviceSize *counterBufferOffsets =
-                        reinterpret_cast<const VkDeviceSize *>(counterBuffers +
-                                                               params->bufferCount);
+                        reinterpret_cast<const VkDeviceSize *>(
+                            ANGLE_UNSAFE_TODO(counterBuffers + params->bufferCount));
                     vkCmdBeginTransformFeedbackEXT(cmdBuffer, 0, params->bufferCount,
                                                    counterBuffers, counterBufferOffsets);
                     break;
@@ -582,8 +621,8 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<EndTransformFeedbackParams>(currentCommand);
                     const VkBuffer *counterBuffers = GetFirstArrayParameter<VkBuffer>(params);
                     const VkDeviceSize *counterBufferOffsets =
-                        reinterpret_cast<const VkDeviceSize *>(counterBuffers +
-                                                               params->bufferCount);
+                        reinterpret_cast<const VkDeviceSize *>(
+                            ANGLE_UNSAFE_TODO(counterBuffers + params->bufferCount));
                     vkCmdEndTransformFeedbackEXT(cmdBuffer, 0, params->bufferCount, counterBuffers,
                                                  counterBufferOffsets);
                     break;
@@ -611,16 +650,16 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<ImageBarrier2Params>(currentCommand);
                     const VkImageMemoryBarrier2 *imageMemoryBarriers2 =
                         GetFirstArrayParameter<VkImageMemoryBarrier2>(params);
-                    VkDependencyInfo pDependencyInfo         = {};
-                    pDependencyInfo.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-                    pDependencyInfo.dependencyFlags          = 0;
-                    pDependencyInfo.memoryBarrierCount       = 0;
-                    pDependencyInfo.pMemoryBarriers          = nullptr;
-                    pDependencyInfo.bufferMemoryBarrierCount = 0;
-                    pDependencyInfo.pBufferMemoryBarriers    = nullptr;
-                    pDependencyInfo.imageMemoryBarrierCount  = 1;
-                    pDependencyInfo.pImageMemoryBarriers     = imageMemoryBarriers2;
-                    vkCmdPipelineBarrier2KHR(cmdBuffer, &pDependencyInfo);
+                    VkDependencyInfo dependencyInfo         = {};
+                    dependencyInfo.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+                    dependencyInfo.dependencyFlags          = 0;
+                    dependencyInfo.memoryBarrierCount       = 0;
+                    dependencyInfo.pMemoryBarriers          = nullptr;
+                    dependencyInfo.bufferMemoryBarrierCount = 0;
+                    dependencyInfo.pBufferMemoryBarriers    = nullptr;
+                    dependencyInfo.imageMemoryBarrierCount  = 1;
+                    dependencyInfo.pImageMemoryBarriers     = imageMemoryBarriers2;
+                    vkCmdPipelineBarrier2KHR(cmdBuffer, &dependencyInfo);
                     break;
                 }
                 case CommandID::ImageWaitEvent:
@@ -665,15 +704,15 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
 
                     const VkMemoryBarrier2 *memoryBarriers2 =
                         GetFirstArrayParameter<VkMemoryBarrier2>(params);
-                    VkDependencyInfo pDependencyInfo         = {};
-                    pDependencyInfo.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-                    pDependencyInfo.memoryBarrierCount       = 1;
-                    pDependencyInfo.pMemoryBarriers          = memoryBarriers2;
-                    pDependencyInfo.bufferMemoryBarrierCount = 0;
-                    pDependencyInfo.pBufferMemoryBarriers    = nullptr;
-                    pDependencyInfo.imageMemoryBarrierCount  = 0;
-                    pDependencyInfo.pImageMemoryBarriers     = nullptr;
-                    vkCmdPipelineBarrier2KHR(cmdBuffer, &pDependencyInfo);
+                    VkDependencyInfo dependencyInfo         = {};
+                    dependencyInfo.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+                    dependencyInfo.memoryBarrierCount       = 1;
+                    dependencyInfo.pMemoryBarriers          = memoryBarriers2;
+                    dependencyInfo.bufferMemoryBarrierCount = 0;
+                    dependencyInfo.pBufferMemoryBarriers    = nullptr;
+                    dependencyInfo.imageMemoryBarrierCount  = 0;
+                    dependencyInfo.pImageMemoryBarriers     = nullptr;
+                    vkCmdPipelineBarrier2KHR(cmdBuffer, &dependencyInfo);
                     break;
                 }
                 case CommandID::NextSubpass:
@@ -749,11 +788,66 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                                       params->dstImage, params->dstImageLayout, 1, &params->region);
                     break;
                 }
+                case CommandID::SetAlphaToCoverageEnable:
+                {
+                    const SetAlphaToCoverageEnableParams *params =
+                        getParamPtr<SetAlphaToCoverageEnableParams>(currentCommand);
+                    vkCmdSetAlphaToCoverageEnableEXT(cmdBuffer, params->alphaToCoverageEnable);
+                    break;
+                }
+                case CommandID::SetAlphaToOneEnable:
+                {
+                    const SetAlphaToOneEnableParams *params =
+                        getParamPtr<SetAlphaToOneEnableParams>(currentCommand);
+                    vkCmdSetAlphaToOneEnableEXT(cmdBuffer, params->alphaToOneEnable);
+                    break;
+                }
                 case CommandID::SetBlendConstants:
                 {
                     const SetBlendConstantsParams *params =
                         getParamPtr<SetBlendConstantsParams>(currentCommand);
-                    vkCmdSetBlendConstants(cmdBuffer, params->blendConstants);
+                    vkCmdSetBlendConstants(cmdBuffer, params->blendConstants.data());
+                    break;
+                }
+                case CommandID::SetColorBlendAdvanced:
+                {
+                    const SetColorBlendAdvancedParams *params =
+                        getParamPtr<SetColorBlendAdvancedParams>(currentCommand);
+                    VkColorBlendAdvancedEXT colorBlendAdvanced = {};
+                    colorBlendAdvanced.advancedBlendOp         = params->advancedBlendOp;
+                    colorBlendAdvanced.srcPremultiplied        = VK_TRUE;
+                    colorBlendAdvanced.dstPremultiplied        = VK_TRUE;
+                    colorBlendAdvanced.blendOverlap            = VK_BLEND_OVERLAP_UNCORRELATED_EXT;
+                    colorBlendAdvanced.clampResults            = VK_FALSE;
+                    vkCmdSetColorBlendAdvancedEXT(cmdBuffer, 0, 1, &colorBlendAdvanced);
+                    break;
+                }
+                case CommandID::SetColorBlendEnable:
+                {
+                    const SetColorBlendEnableParams *params =
+                        getParamPtr<SetColorBlendEnableParams>(currentCommand);
+                    const VkBool32 *colorBlendEnable = GetFirstArrayParameter<VkBool32>(params);
+                    vkCmdSetColorBlendEnableEXT(cmdBuffer, params->firstAttachment,
+                                                params->attachmentCount, colorBlendEnable);
+                    break;
+                }
+                case CommandID::SetColorBlendEquation:
+                {
+                    const SetColorBlendEquationParams *params =
+                        getParamPtr<SetColorBlendEquationParams>(currentCommand);
+                    const VkColorBlendEquationEXT *colorBlendEquation =
+                        GetFirstArrayParameter<VkColorBlendEquationEXT>(params);
+                    vkCmdSetColorBlendEquationEXT(cmdBuffer, params->firstAttachment,
+                                                  params->attachmentCount, colorBlendEquation);
+                    break;
+                }
+                case CommandID::SetColorWriteMask:
+                {
+                    const SetColorWriteMaskParams *params =
+                        getParamPtr<SetColorWriteMaskParams>(currentCommand);
+                    const VkColorComponentFlags colorWriteMask =
+                        static_cast<VkColorComponentFlags>(params->colorWriteMask);
+                    vkCmdSetColorWriteMaskEXT(cmdBuffer, params->attachment, 1, &colorWriteMask);
                     break;
                 }
                 case CommandID::SetCullMode:
@@ -776,6 +870,20 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                     const SetDepthBiasEnableParams *params =
                         getParamPtr<SetDepthBiasEnableParams>(currentCommand);
                     vkCmdSetDepthBiasEnableEXT(cmdBuffer, params->depthBiasEnable);
+                    break;
+                }
+                case CommandID::SetDepthClampEnable:
+                {
+                    const SetDepthClampEnableParams *params =
+                        getParamPtr<SetDepthClampEnableParams>(currentCommand);
+                    vkCmdSetDepthClampEnableEXT(cmdBuffer, params->depthClampEnable);
+                    break;
+                }
+                case CommandID::SetDepthClipNegativeOneToOne:
+                {
+                    const SetDepthClipNegativeOneToOneParams *params =
+                        getParamPtr<SetDepthClipNegativeOneToOneParams>(currentCommand);
+                    vkCmdSetDepthClipNegativeOneToOneEXT(cmdBuffer, params->negativeOneToOne);
                     break;
                 }
                 case CommandID::SetDepthCompareOp:
@@ -825,6 +933,18 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                     vkCmdSetFrontFaceEXT(cmdBuffer, params->frontFace);
                     break;
                 }
+                case CommandID::SetLineRasterizationMode:
+                {
+                    const SetLineRasterizationModeParams *params =
+                        getParamPtr<SetLineRasterizationModeParams>(currentCommand);
+                    vkCmdSetLineRasterizationModeEXT(cmdBuffer, params->lineRasterizationMode);
+                    break;
+                }
+                case CommandID::SetLineStippleEnable:
+                {
+                    vkCmdSetLineStippleEnableEXT(cmdBuffer, VK_FALSE);
+                    break;
+                }
                 case CommandID::SetLineWidth:
                 {
                     const SetLineWidthParams *params =
@@ -836,6 +956,27 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                 {
                     const SetLogicOpParams *params = getParamPtr<SetLogicOpParams>(currentCommand);
                     vkCmdSetLogicOpEXT(cmdBuffer, params->logicOp);
+                    break;
+                }
+                case CommandID::SetLogicOpEnable:
+                {
+                    const SetLogicOpEnableParams *params =
+                        getParamPtr<SetLogicOpEnableParams>(currentCommand);
+                    vkCmdSetLogicOpEnableEXT(cmdBuffer, params->logicOpEnable);
+                    break;
+                }
+                case CommandID::SetPatchControlPoints:
+                {
+                    const SetPatchControlPointsParams *params =
+                        getParamPtr<SetPatchControlPointsParams>(currentCommand);
+                    vkCmdSetPatchControlPointsEXT(cmdBuffer, params->patchControlPoints);
+                    break;
+                }
+                case CommandID::SetPolygonMode:
+                {
+                    const SetPolygonModeParams *params =
+                        getParamPtr<SetPolygonModeParams>(currentCommand);
+                    vkCmdSetPolygonModeEXT(cmdBuffer, params->polygonMode);
                     break;
                 }
                 case CommandID::SetPrimitiveRestartEnable:
@@ -857,6 +998,23 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                     const SetRasterizerDiscardEnableParams *params =
                         getParamPtr<SetRasterizerDiscardEnableParams>(currentCommand);
                     vkCmdSetRasterizerDiscardEnableEXT(cmdBuffer, params->rasterizerDiscardEnable);
+                    break;
+                }
+                case CommandID::SetRasterizationSamples:
+                {
+                    const SetRasterizationSamplesParams *params =
+                        getParamPtr<SetRasterizationSamplesParams>(currentCommand);
+                    vkCmdSetRasterizationSamplesEXT(cmdBuffer, params->rasterizationSamples);
+                    break;
+                }
+                case CommandID::SetSampleMask:
+                {
+                    static_assert((vk_gl::kSupportedSampleCounts &
+                                   (VK_SAMPLE_COUNT_32_BIT | VK_SAMPLE_COUNT_64_BIT)) == 0);
+
+                    const SetSampleMaskParams *params =
+                        getParamPtr<SetSampleMaskParams>(currentCommand);
+                    vkCmdSetSampleMaskEXT(cmdBuffer, VK_SAMPLE_COUNT_16_BIT, &params->sampleMask);
                     break;
                 }
                 case CommandID::SetScissor:
@@ -966,11 +1124,6 @@ void SecondaryCommandBuffer::executeCommands(PrimaryCommandBuffer *primary)
                         getParamPtr<WriteTimestampParams>(currentCommand);
                     vkCmdWriteTimestamp2KHR(cmdBuffer, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                             params->queryPool, params->query);
-                    break;
-                }
-                default:
-                {
-                    UNREACHABLE();
                     break;
                 }
             }

@@ -30,7 +30,7 @@ class PreciseTest : public testing::TestWithParam<bool>
 
     void TearDown() override
     {
-        for (auto shaderOutputType : mShaderOutputList)
+        for (const auto &shaderOutputType : mShaderOutputList)
         {
             DestroyCompiler(shaderOutputType.first);
         }
@@ -40,7 +40,7 @@ class PreciseTest : public testing::TestWithParam<bool>
     {
         mShaderOutputList = std::move(shaderOutputList);
 
-        for (auto shaderOutputType : mShaderOutputList)
+        for (const auto &shaderOutputType : mShaderOutputList)
         {
             sh::InitBuiltInResources(&mResourceList[shaderOutputType.first]);
             mCompilerList[shaderOutputType.first] = nullptr;
@@ -58,7 +58,7 @@ class PreciseTest : public testing::TestWithParam<bool>
 
     void InitializeCompiler()
     {
-        for (auto shaderOutputType : mShaderOutputList)
+        for (const auto &shaderOutputType : mShaderOutputList)
         {
             InitializeCompiler(shaderOutputType.first);
         }
@@ -82,9 +82,11 @@ class PreciseTest : public testing::TestWithParam<bool>
 
         ShCompileOptions options = {};
         options.objectCode       = true;
+        options.outputDebugInfo  = true;
         if (shaderOutputType == SH_SPIRV_VULKAN_OUTPUT || shaderOutputType == SH_MSL_METAL_OUTPUT)
         {
             options.removeInactiveVariables = true;
+            options.retainInactiveFragmentOutputs = shaderOutputType == SH_MSL_METAL_OUTPUT;
         }
 
         bool success = sh::Compile(mCompilerList[shaderOutputType], shaderStrings, 1, options);
@@ -98,7 +100,7 @@ class PreciseTest : public testing::TestWithParam<bool>
 
     void TestShaderCompile(const char *shaderSource, size_t expectedNoContractionDecorationCount)
     {
-        for (auto shaderOutputType : mShaderOutputList)
+        for (const auto &shaderOutputType : mShaderOutputList)
         {
             EXPECT_TRUE(TestShaderCompile(shaderOutputType.first, shaderSource));
 

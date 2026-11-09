@@ -10,19 +10,17 @@
 #ifndef ANGLE_TESTS_ANGLE_TEST_H_
 #define ANGLE_TESTS_ANGLE_TEST_H_
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
+#include "common/unsafe_buffers.h"
 
 #include "RenderDoc.h"
 #include "angle_test_configs.h"
 #include "angle_test_platform.h"
 #include "common/angleutils.h"
 #include "common/platform_helpers.h"
+#include "common/span.h"
 #include "common/system_utils.h"
 #include "common/vector_utils.h"
 #include "platform/PlatformMethods.h"
@@ -106,6 +104,9 @@ struct GLColorRGB
     static const GLColorRGB green;
     static const GLColorRGB red;
     static const GLColorRGB yellow;
+    static const GLColorRGB magenta;
+    static const GLColorRGB cyan;
+    static const GLColorRGB white;
 };
 
 struct GLColorRG
@@ -142,9 +143,9 @@ struct GLColor
 
     angle::Vector4 toNormalizedVector() const;
 
-    GLubyte &operator[](size_t index) { return (&R)[index]; }
+    GLubyte &operator[](size_t index) { return ANGLE_UNSAFE_TODO((&R)[index]); }
 
-    const GLubyte &operator[](size_t index) const { return (&R)[index]; }
+    const GLubyte &operator[](size_t index) const { return ANGLE_UNSAFE_TODO((&R)[index]); }
 
     const GLubyte *data() const { return &R; }
     GLubyte *data() { return &R; }
@@ -229,6 +230,46 @@ bool operator==(const GLColorT<T> &a, const GLColorT<T> &b)
 std::ostream &operator<<(std::ostream &ostream, const GLColor32F &color);
 GLColor32F ReadColor32F(GLint x, GLint y);
 
+namespace priv
+{
+// Returns the `size` bytes mapped at `ptr` as a span of T, or an empty span if the mapping
+// failed.
+template <typename T>
+Span<T> MappedBufferAsSpan(void *ptr, GLsizeiptr size)
+{
+    if (ptr == nullptr)
+    {
+        return {};
+    }
+    ASSERT(size % sizeof(T) == 0);
+    // SAFETY: the GL map call returned a mapping of exactly `size` bytes.
+    return ANGLE_UNSAFE_BUFFERS(Span(static_cast<T *>(ptr), static_cast<size_t>(size) / sizeof(T)));
+}
+}  // namespace priv
+
+// Call the matching glMapBuffer* function and return the mapping as a span of T, or an empty
+// span if the mapping fails. Use a const T for read-only mappings.
+template <typename T>
+Span<T> MapBufferRange(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access)
+{
+    return priv::MappedBufferAsSpan<T>(glMapBufferRange(target, offset, length, access), length);
+}
+
+template <typename T>
+Span<T> MapBufferRangeEXT(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access)
+{
+    return priv::MappedBufferAsSpan<T>(glMapBufferRangeEXT(target, offset, length, access), length);
+}
+
+// glMapBufferOES maps the whole buffer, so its size is queried from GL_BUFFER_SIZE.
+template <typename T>
+Span<T> MapBufferOES(GLenum target, GLenum access)
+{
+    GLint size = 0;
+    glGetBufferParameteriv(target, GL_BUFFER_SIZE, &size);
+    return priv::MappedBufferAsSpan<T>(glMapBufferOES(target, access), size);
+}
+
 constexpr std::array<GLenum, 6> kCubeFaces = {
     {GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_X, GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
      GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
@@ -243,6 +284,7 @@ GPUTestConfig::API GetTestConfigAPIFromRenderer(angle::GLESDriverType driverType
                                                 EGLenum deviceType);
 
 EGLenum GetEglPlatform();
+EGLenum GetPbufferOnlyDefaultPlatformType();
 }  // namespace angle
 
 #define EXPECT_PIXEL_EQ(x, y, r, g, b, a) \
@@ -522,11 +564,13 @@ class ANGLETestBase : public ::testing::Test
     void setDebugEnabled(bool enabled);
     void setNoErrorEnabled(bool enabled);
     void setWebGLCompatibilityEnabled(bool webglCompatibility);
+    void setHardenedContextEnabled(bool hardenedContext);
     void setExtensionsEnabled(bool extensionsEnabled);
     void setRobustAccess(bool enabled);
     void setBindGeneratesResource(bool bindGeneratesResource);
     void setClientArraysEnabled(bool enabled);
     void setRobustResourceInit(bool enabled);
+    void setPbuffer(bool enabled);
     void setMutableRenderBuffer(bool enabled);
     void setContextProgramCacheEnabled(bool enabled);
     void setContextResetStrategy(EGLenum resetStrategy);
@@ -537,6 +581,7 @@ class ANGLETestBase : public ::testing::Test
 
     int getClientMajorVersion() const;
     int getClientMinorVersion() const;
+    bool isAtLeastClientVersion(int major, int minor) const;
 
     GLWindowBase *getGLWindow() const;
     EGLWindow *getEGLWindow() const;
@@ -591,6 +636,11 @@ class ANGLETestBase : public ::testing::Test
                mCurrentParams->isSwiftshader();
     }
 
+    bool isMetalRenderer() const
+    {
+        return mCurrentParams->getRenderer() == EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE;
+    }
+
     bool isDriverSystemEgl() const
     {
         return mCurrentParams->driver == angle::GLESDriverType::SystemEGL;
@@ -599,6 +649,8 @@ class ANGLETestBase : public ::testing::Test
     angle::GLESDriverType getDriverType() const { return mCurrentParams->driver; }
 
     bool platformSupportsMultithreading() const;
+
+    angle::VulkanPerfCounters getPerfCounters();
 
     bool mIsSetUp = false;
 
@@ -665,6 +717,8 @@ class ANGLETestBase : public ::testing::Test
     TestFixture *mFixture;
 
     RenderDoc mRenderDoc;
+
+    CounterNameToIndexMap mPerfCounterIndexMap;
 
     // Workaround for NVIDIA not being able to share a window with OpenGL and Vulkan.
     static Optional<EGLint> mLastRendererType;

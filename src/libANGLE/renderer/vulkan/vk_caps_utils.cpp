@@ -7,11 +7,8 @@
 //    Helper functions for the Vulkan Caps.
 //
 
-#ifdef UNSAFE_BUFFERS_BUILD
-#    pragma allow_unsafe_buffers
-#endif
-
 #include "libANGLE/renderer/vulkan/vk_caps_utils.h"
+#include "common/unsafe_buffers.h"
 
 #include <type_traits>
 
@@ -80,18 +77,15 @@ bool GetTextureSRGBDecodeSupport(const Renderer *renderer)
 {
     static constexpr bool kLinearColorspace = true;
 
+    // As per OpenGL ES specs, ASTC, ETC2, and BPTC compressed formats are either exposed with their
+    // sRGB variants or not exposed at all; the Vulkan backend treats S3TC formats similarly.
+    // Therefore, there is no need to check compressed formats here as they do not affect support
+    // for skipping sRGB decode.
+
     // GL_SRGB and GL_SRGB_ALPHA unsized formats are also required by the spec, but the only valid
     // type for them is GL_UNSIGNED_BYTE, so they are fully included in the sized formats listed
     // here
-    std::vector<GLenum> optionalSizedSRGBFormats = {
-        GL_SRGB8,
-        GL_SRGB8_ALPHA8_EXT,
-        GL_COMPRESSED_SRGB_S3TC_DXT1_EXT,
-        GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT,
-        GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT,
-        GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT,
-    };
-
+    std::vector<GLenum> optionalSizedSRGBFormats = {GL_SRGB8, GL_SRGB8_ALPHA8_EXT};
     if (!FormatReinterpretationSupported(optionalSizedSRGBFormats, renderer, kLinearColorspace))
     {
         return false;
@@ -105,51 +99,23 @@ bool GetTextureSRGBOverrideSupport(const Renderer *renderer,
 {
     static constexpr bool kNonLinearColorspace = false;
 
+    // As per OpenGL ES specs, ASTC, ETC2, and BPTC compressed formats are either exposed with their
+    // sRGB variants or not exposed at all; the Vulkan backend treats S3TC formats similarly.
+    // Therefore, there is no need to check compressed formats here as they do not affect support
+    // for sRGB overriding.
+
     // If the given linear format is supported, we also need to support its corresponding nonlinear
     // format. If the given linear format is NOT supported, we don't care about its corresponding
     // nonlinear format.
-    std::vector<GLenum> optionalLinearFormats     = {GL_RGB8,
-                                                     GL_RGBA8,
-                                                     GL_COMPRESSED_RGB8_ETC2,
-                                                     GL_COMPRESSED_RGBA8_ETC2_EAC,
-                                                     GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2,
-                                                     GL_COMPRESSED_RGBA_ASTC_4x4,
-                                                     GL_COMPRESSED_RGBA_ASTC_5x4,
-                                                     GL_COMPRESSED_RGBA_ASTC_5x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_6x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_6x6,
-                                                     GL_COMPRESSED_RGBA_ASTC_8x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_8x6,
-                                                     GL_COMPRESSED_RGBA_ASTC_8x8,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x5,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x6,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x8,
-                                                     GL_COMPRESSED_RGBA_ASTC_10x10,
-                                                     GL_COMPRESSED_RGBA_ASTC_12x10,
-                                                     GL_COMPRESSED_RGBA_ASTC_12x12};
-    std::vector<GLenum> optionalS3TCLinearFormats = {
-        GL_COMPRESSED_RGB_S3TC_DXT1_EXT, GL_COMPRESSED_RGBA_S3TC_DXT1_EXT,
-        GL_COMPRESSED_RGBA_S3TC_DXT3_EXT, GL_COMPRESSED_RGBA_S3TC_DXT5_EXT};
-    std::vector<GLenum> optionalR8LinearFormats   = {GL_R8};
-    std::vector<GLenum> optionalRG8LinearFormats  = {GL_RG8};
-    std::vector<GLenum> optionalBPTCLinearFormats = {GL_COMPRESSED_RGBA_BPTC_UNORM_EXT};
-
+    std::vector<GLenum> optionalLinearFormats = {GL_RGB8, GL_RGBA8};
     if (!FormatReinterpretationSupported(optionalLinearFormats, renderer, kNonLinearColorspace))
     {
         return false;
     }
 
-    if (supportedExtensions.textureCompressionS3tcSrgbEXT)
-    {
-        if (!FormatReinterpretationSupported(optionalS3TCLinearFormats, renderer,
-                                             kNonLinearColorspace))
-        {
-            return false;
-        }
-    }
-
     if (supportedExtensions.textureSRGBR8EXT)
     {
+        std::vector<GLenum> optionalR8LinearFormats = {GL_R8};
         if (!FormatReinterpretationSupported(optionalR8LinearFormats, renderer,
                                              kNonLinearColorspace))
         {
@@ -159,16 +125,8 @@ bool GetTextureSRGBOverrideSupport(const Renderer *renderer,
 
     if (supportedExtensions.textureSRGBRG8EXT)
     {
+        std::vector<GLenum> optionalRG8LinearFormats = {GL_RG8};
         if (!FormatReinterpretationSupported(optionalRG8LinearFormats, renderer,
-                                             kNonLinearColorspace))
-        {
-            return false;
-        }
-    }
-
-    if (supportedExtensions.textureCompressionBptcEXT)
-    {
-        if (!FormatReinterpretationSupported(optionalBPTCLinearFormats, renderer,
                                              kNonLinearColorspace))
         {
             return false;
@@ -201,25 +159,27 @@ bool CanSupportYuvInternalFormat(const Renderer *renderer)
     return twoPlane8bitYuvFormatSupported && threePlane8bitYuvFormatSupported;
 }
 
-uint32_t GetTimestampValidBits(const std::vector<VkQueueFamilyProperties> &queueFamilyProperties,
+uint32_t GetTimestampValidBits(const std::vector<VkQueueFamilyProperties2> &queueFamilyProperties2,
                                uint32_t queueFamilyIndex)
 {
-    ASSERT(!queueFamilyProperties.empty());
+    ASSERT(!queueFamilyProperties2.empty());
 
-    if (queueFamilyIndex < queueFamilyProperties.size())
+    if (queueFamilyIndex < queueFamilyProperties2.size())
     {
         // If a queue family is already selected (which is only currently the case if there is only
         // one family), get the timestamp valid bits from that queue.
-        return queueFamilyProperties[queueFamilyIndex].timestampValidBits;
+        return queueFamilyProperties2[queueFamilyIndex].queueFamilyProperties.timestampValidBits;
     }
 
     // If a queue family is not already selected, we cannot know which queue family will end up
     // being used until a surface is used.  Take the minimum valid bits from all queues as a safe
     // measure.
-    uint32_t timestampValidBits = queueFamilyProperties[0].timestampValidBits;
-    for (const VkQueueFamilyProperties &properties : queueFamilyProperties)
+    uint32_t timestampValidBits =
+        queueFamilyProperties2[0].queueFamilyProperties.timestampValidBits;
+    for (const VkQueueFamilyProperties2 &properties2 : queueFamilyProperties2)
     {
-        timestampValidBits = std::min(timestampValidBits, properties.timestampValidBits);
+        timestampValidBits =
+            std::min(timestampValidBits, properties2.queueFamilyProperties.timestampValidBits);
     }
     return timestampValidBits;
 }
@@ -315,7 +275,7 @@ void LogMissingExtensionsForGLES32(const gl::Extensions &nativeExtensions)
         if (!requiredExtensions[index])
         {
             INFO() << "The following extension is required for GLES 3.2: "
-                   << kRequiredExtensionNames[index];
+                   << ANGLE_UNSAFE_TODO(kRequiredExtensionNames[index]);
         }
     }
 }
@@ -336,6 +296,31 @@ void Renderer::ensureCapsInitialized() const
 
     // Enable GL_EXT_buffer_storage
     mNativeExtensions.bufferStorageEXT = true;
+
+    // If the BC compression formats device feature is not explicitly enabled, ensure that either
+    // all S3TC formats are supported or none to guarantee availability of their sRGB variants.
+    if (mPhysicalDeviceFeatures.textureCompressionBC == VK_FALSE)
+    {
+        if (!mNativeExtensions.textureCompressionDxt1EXT ||
+            !mNativeExtensions.textureCompressionDxt3ANGLE ||
+            !mNativeExtensions.textureCompressionDxt5ANGLE ||
+            !mNativeExtensions.textureCompressionS3tcSrgbEXT)
+        {
+            mNativeExtensions.textureCompressionDxt1EXT     = false;
+            mNativeExtensions.textureCompressionDxt3ANGLE   = false;
+            mNativeExtensions.textureCompressionDxt5ANGLE   = false;
+            mNativeExtensions.textureCompressionS3tcSrgbEXT = false;
+        }
+    }
+    else
+    {
+        ASSERT(mNativeExtensions.textureCompressionDxt1EXT);
+        ASSERT(mNativeExtensions.textureCompressionDxt3ANGLE);
+        ASSERT(mNativeExtensions.textureCompressionDxt5ANGLE);
+        ASSERT(mNativeExtensions.textureCompressionS3tcSrgbEXT);
+        ASSERT(mNativeExtensions.textureCompressionRgtcEXT);
+        ASSERT(mNativeExtensions.textureCompressionBptcEXT);
+    }
 
     // When ETC2/EAC formats are natively supported, enable ANGLE-specific extension string to
     // expose them to WebGL. In other case, mark potentially-available ETC1 extension as emulated.
@@ -492,7 +477,7 @@ void Renderer::ensureCapsInitialized() const
         vk::RenderPassCommandBuffer::SupportsQueries(mPhysicalDeviceFeatures))
     {
         const uint32_t timestampValidBits =
-            vk::GetTimestampValidBits(mQueueFamilyProperties, mCurrentQueueFamilyIndex);
+            vk::GetTimestampValidBits(mQueueFamilyProperties2, mCurrentQueueFamilyIndex);
 
         mNativeExtensions.disjointTimerQueryEXT = timestampValidBits > 0;
         mNativeCaps.queryCounterBitsTimeElapsed = timestampValidBits;
@@ -546,12 +531,10 @@ void Renderer::ensureCapsInitialized() const
 
     // Enable EXT_srgb_write_control if either of these conditions are met -
     // - VK_KHR_swapchain_mutable_format is supported
-    // - VK_KHR_image_format_list is supported and exposeNonConformantExtensionsAndVersions is
-    // enabled
+    // - exposeNonConformantExtensionsAndVersions is enabled
     mNativeExtensions.sRGBWriteControlEXT =
         getFeatures().supportsSwapchainMutableFormat.enabled ||
-        (getFeatures().supportsImageFormatList.enabled &&
-         getFeatures().exposeNonConformantExtensionsAndVersions.enabled);
+        getFeatures().exposeNonConformantExtensionsAndVersions.enabled;
 
     // Vulkan natively supports io interface block.
     mNativeExtensions.shaderIoBlocksOES = true;
@@ -592,9 +575,7 @@ void Renderer::ensureCapsInitialized() const
     // glDisable(GL_MULTISAMPLE) don't fail.  This is not actually implemented in Vulkan.  However,
     // no CTS tests actually test this extension.  GL_SAMPLE_ALPHA_TO_ONE requires the Vulkan
     // alphaToOne feature.
-    mNativeExtensions.multisampleCompatibilityEXT =
-        mPhysicalDeviceFeatures.alphaToOne ||
-        mFeatures.exposeNonConformantExtensionsAndVersions.enabled;
+    mNativeExtensions.multisampleCompatibilityEXT = mPhysicalDeviceFeatures.alphaToOne == VK_TRUE;
 
     // GL_KHR_blend_equation_advanced.  According to the spec, only color attachment zero can be
     // used with advanced blend:
@@ -690,8 +671,9 @@ void Renderer::ensureCapsInitialized() const
     mNativeCaps.maxMultisampleLineWidth = mNativeCaps.maxAliasedLineWidth;
     mNativeCaps.lineWidthGranularity    = limitsVk.lineWidthGranularity;
 
-    mNativeCaps.maxDrawBuffers =
-        std::min(limitsVk.maxColorAttachments, limitsVk.maxFragmentOutputAttachments);
+    mNativeCaps.maxDrawBuffers = std::min<uint32_t>(
+        std::min(limitsVk.maxColorAttachments, limitsVk.maxFragmentOutputAttachments),
+        gl::IMPLEMENTATION_MAX_DRAW_BUFFERS);
     mNativeCaps.maxFramebufferWidth  = rx::LimitToInt(limitsVk.maxFramebufferWidth);
     mNativeCaps.maxFramebufferHeight = rx::LimitToInt(limitsVk.maxFramebufferHeight);
     mNativeCaps.maxColorAttachments  = rx::LimitToInt(limitsVk.maxColorAttachments);
@@ -1305,13 +1287,7 @@ void Renderer::ensureCapsInitialized() const
     constexpr uint32_t kMaxCullDistancePerSpec                = 8;
     constexpr uint32_t kMaxCombinedClipAndCullDistancePerSpec = 8;
 
-    // TODO: http://anglebug.com/42264006
-    // After implementing EXT_geometry_shader, EXT_clip_cull_distance should be additionally
-    // implemented to support the geometry shader. Until then, EXT_clip_cull_distance is enabled
-    // only in the experimental cases.
-    if ((mFeatures.supportsClipCullDistanceInGSAndTS.enabled ||
-         (!mNativeExtensions.geometryShaderAny() && !mNativeExtensions.tessellationShaderAny())) &&
-        mPhysicalDeviceFeatures.shaderClipDistance &&
+    if (mPhysicalDeviceFeatures.shaderClipDistance &&
         limitsVk.maxClipDistances >= kMaxClipDistancePerSpec)
     {
         // Do not enable GL_APPLE_clip_distance for Samsung devices.
@@ -1391,6 +1367,11 @@ void Renderer::ensureCapsInitialized() const
     mNativeExtensions.framebufferFoveatedQCOM = mFeatures.supportsFoveatedRendering.enabled;
     // GL_QCOM_texture_foveated
     mNativeExtensions.textureFoveatedQCOM = mFeatures.supportsFoveatedRendering.enabled;
+    // GL_QCOM_texture_lod_bias
+    mNativeExtensions.textureLodBiasQCOM = true;
+
+    // GL_EXT_texture_lod_bias
+    mNativeExtensions.textureLodBiasEXT = true;
 
     // GL_ANGLE_shader_pixel_local_storage
     //
@@ -1523,16 +1504,30 @@ void Renderer::ensureCapsInitialized() const
     // GL_OES_compressed_paletted_texture
     mNativeExtensions.compressedPalettedTextureOES = true;
 
+    // Limits for texture and buffer allocations
+    mNativeLimitations.maxBufferBytes  = static_cast<size_t>(mMaxMemoryAllocationSize);
+    mNativeLimitations.maxTextureBytes = static_cast<size_t>(mMaxMemoryAllocationSize);
+
+    // Ask the front-end to handle robust-init when copying between mips of the same texture via
+    // glCopyTexImage2D.
+    mNativeLimitations.noRobustInitOnOOBCopyTexImageSameTexture = true;
+
     // Log any missing extensions required for GLES 3.2.
     LogMissingExtensionsForGLES32(mNativeExtensions);
+
+    // Create a mask of valid attachments based on |maxDrawBuffers|.  That is a combination of
+    // limitsVk.maxColorAttachments, limitsVk.maxFragmentOutputAttachments, various additional
+    // reasons to cap the limit and finally gl::IMPLEMENTATION_MAX_DRAW_BUFFERS (also enforced by
+    // the front-end) to make sure it has at most as many bits as this mask.
+    mValidDrawBuffers = gl::DrawBufferMask::Mask(mNativeCaps.maxDrawBuffers);
 }
 
 bool CanSupportGLES32(const gl::Extensions &nativeExtensions)
 {
     std::vector<bool> requiredExtensions = GetRequiredGLES32ExtensionList(nativeExtensions);
-    for (uint32_t index = 0; index < requiredExtensions.size(); index++)
+    for (bool requiredExtension : requiredExtensions)
     {
-        if (!requiredExtensions[index])
+        if (!requiredExtension)
         {
             return false;
         }
@@ -1713,25 +1708,25 @@ egl::ConfigSet GenerateConfigs(const GLenum *colorFormats,
     for (size_t colorFormatIdx = 0; colorFormatIdx < colorFormatsCount; colorFormatIdx++)
     {
         const gl::InternalFormat &colorFormatInfo =
-            gl::GetSizedInternalFormatInfo(colorFormats[colorFormatIdx]);
+            gl::GetSizedInternalFormatInfo(ANGLE_UNSAFE_TODO(colorFormats[colorFormatIdx]));
         ASSERT(colorFormatInfo.sized);
 
         for (size_t depthStencilFormatIdx = 0; depthStencilFormatIdx < depthStencilFormatCount;
              depthStencilFormatIdx++)
         {
-            const gl::InternalFormat &depthStencilFormatInfo =
-                gl::GetSizedInternalFormatInfo(depthStencilFormats[depthStencilFormatIdx]);
-            ASSERT(depthStencilFormats[depthStencilFormatIdx] == GL_NONE ||
-                   depthStencilFormatInfo.sized);
+            const gl::InternalFormat &depthStencilFormatInfo = gl::GetSizedInternalFormatInfo(
+                ANGLE_UNSAFE_TODO(depthStencilFormats[depthStencilFormatIdx]));
+            ANGLE_UNSAFE_TODO(ASSERT(depthStencilFormats[depthStencilFormatIdx] == GL_NONE ||
+                                     depthStencilFormatInfo.sized));
 
             const gl::SupportedSampleSet *configSampleCounts = &sampleCounts;
             // If there is no depth/stencil buffer, use the color samples set.
-            if (depthStencilFormats[depthStencilFormatIdx] == GL_NONE)
+            if (ANGLE_UNSAFE_TODO(depthStencilFormats[depthStencilFormatIdx]) == GL_NONE)
             {
                 configSampleCounts = &colorSampleCounts;
             }
             // If there is no color buffer, use the depth/stencil samples set.
-            else if (colorFormats[colorFormatIdx] == GL_NONE)
+            else if (ANGLE_UNSAFE_TODO(colorFormats[colorFormatIdx]) == GL_NONE)
             {
                 configSampleCounts = &depthStencilSampleCounts;
             }

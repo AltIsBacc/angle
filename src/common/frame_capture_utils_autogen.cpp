@@ -217,6 +217,10 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
             WriteParamValueReplay<ParamType::TFramebufferIDPointer>(
                 os, call, param.value.FramebufferIDPointerVal);
             break;
+        case ParamType::TFramebufferParameter:
+            WriteParamValueReplay<ParamType::TFramebufferParameter>(
+                os, call, param.value.FramebufferParameterVal);
+            break;
         case ParamType::TGLDEBUGPROC:
             WriteParamValueReplay<ParamType::TGLDEBUGPROC>(os, call, param.value.GLDEBUGPROCVal);
             break;
@@ -408,8 +412,20 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
             WriteParamValueReplay<ParamType::TMemoryObjectIDPointer>(
                 os, call, param.value.MemoryObjectIDPointerVal);
             break;
+        case ParamType::TMemoryTrimLevel:
+            WriteParamValueReplay<ParamType::TMemoryTrimLevel>(os, call,
+                                                               param.value.MemoryTrimLevelVal);
+            break;
         case ParamType::TObjectType:
             WriteParamValueReplay<ParamType::TObjectType>(os, call, param.value.ObjectTypeVal);
+            break;
+        case ParamType::TPackUnpackParameter:
+            WriteParamValueReplay<ParamType::TPackUnpackParameter>(
+                os, call, param.value.PackUnpackParameterVal);
+            break;
+        case ParamType::TPlaneParameter:
+            WriteParamValueReplay<ParamType::TPlaneParameter>(os, call,
+                                                              param.value.PlaneParameterVal);
             break;
         case ParamType::TPointParameter:
             WriteParamValueReplay<ParamType::TPointParameter>(os, call,
@@ -449,6 +465,14 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
             WriteParamValueReplay<ParamType::TQueryIDPointer>(os, call,
                                                               param.value.QueryIDPointerVal);
             break;
+        case ParamType::TQueryObjectParameter:
+            WriteParamValueReplay<ParamType::TQueryObjectParameter>(
+                os, call, param.value.QueryObjectParameterVal);
+            break;
+        case ParamType::TQueryParameter:
+            WriteParamValueReplay<ParamType::TQueryParameter>(os, call,
+                                                              param.value.QueryParameterVal);
+            break;
         case ParamType::TQueryType:
             WriteParamValueReplay<ParamType::TQueryType>(os, call, param.value.QueryTypeVal);
             break;
@@ -475,6 +499,10 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
             WriteParamValueReplay<ParamType::TSamplerIDPointer>(os, call,
                                                                 param.value.SamplerIDPointerVal);
             break;
+        case ParamType::TSamplerParameter:
+            WriteParamValueReplay<ParamType::TSamplerParameter>(os, call,
+                                                                param.value.SamplerParameterVal);
+            break;
         case ParamType::TSemaphoreID:
             WriteParamValueReplay<ParamType::TSemaphoreID>(os, call, param.value.SemaphoreIDVal);
             break;
@@ -485,6 +513,10 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
         case ParamType::TSemaphoreIDPointer:
             WriteParamValueReplay<ParamType::TSemaphoreIDPointer>(
                 os, call, param.value.SemaphoreIDPointerVal);
+            break;
+        case ParamType::TShaderParameter:
+            WriteParamValueReplay<ParamType::TShaderParameter>(os, call,
+                                                               param.value.ShaderParameterVal);
             break;
         case ParamType::TShaderProgramID:
             WriteParamValueReplay<ParamType::TShaderProgramID>(os, call,
@@ -532,6 +564,10 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
             WriteParamValueReplay<ParamType::TTextureIDPointer>(os, call,
                                                                 param.value.TextureIDPointerVal);
             break;
+        case ParamType::TTextureImageParameter:
+            WriteParamValueReplay<ParamType::TTextureImageParameter>(
+                os, call, param.value.TextureImageParameterVal);
+            break;
         case ParamType::TTextureTarget:
             WriteParamValueReplay<ParamType::TTextureTarget>(os, call,
                                                              param.value.TextureTargetVal);
@@ -557,6 +593,10 @@ void WriteParamCaptureReplay(std::ostream &os, const CallCapture &call, const Pa
         case ParamType::TUniformBlockIndex:
             WriteParamValueReplay<ParamType::TUniformBlockIndex>(os, call,
                                                                  param.value.UniformBlockIndexVal);
+            break;
+        case ParamType::TUniformBlockParameter:
+            WriteParamValueReplay<ParamType::TUniformBlockParameter>(
+                os, call, param.value.UniformBlockParameterVal);
             break;
         case ParamType::TUniformLocation:
             WriteParamValueReplay<ParamType::TUniformLocation>(os, call,
@@ -1006,6 +1046,8 @@ const char *ParamTypeToString(ParamType paramType)
             return "const GLuint *";
         case ParamType::TFramebufferIDPointer:
             return "GLuint *";
+        case ParamType::TFramebufferParameter:
+            return "GLenum";
         case ParamType::TGLDEBUGPROC:
             return "GLDEBUGPROC";
         case ParamType::TGLDEBUGPROCKHR:
@@ -1112,7 +1154,13 @@ const char *ParamTypeToString(ParamType paramType)
             return "const GLuint *";
         case ParamType::TMemoryObjectIDPointer:
             return "GLuint *";
+        case ParamType::TMemoryTrimLevel:
+            return "GLenum";
         case ParamType::TObjectType:
+            return "GLenum";
+        case ParamType::TPackUnpackParameter:
+            return "GLenum";
+        case ParamType::TPlaneParameter:
             return "GLenum";
         case ParamType::TPointParameter:
             return "GLenum";
@@ -1134,6 +1182,10 @@ const char *ParamTypeToString(ParamType paramType)
             return "const GLuint *";
         case ParamType::TQueryIDPointer:
             return "GLuint *";
+        case ParamType::TQueryObjectParameter:
+            return "GLenum";
+        case ParamType::TQueryParameter:
+            return "GLenum";
         case ParamType::TQueryType:
             return "GLenum";
         case ParamType::TRenderbufferID:
@@ -1148,12 +1200,16 @@ const char *ParamTypeToString(ParamType paramType)
             return "const GLuint *";
         case ParamType::TSamplerIDPointer:
             return "GLuint *";
+        case ParamType::TSamplerParameter:
+            return "GLenum";
         case ParamType::TSemaphoreID:
             return "GLuint";
         case ParamType::TSemaphoreIDConstPointer:
             return "const GLuint *";
         case ParamType::TSemaphoreIDPointer:
             return "GLuint *";
+        case ParamType::TShaderParameter:
+            return "GLenum";
         case ParamType::TShaderProgramID:
             return "GLuint";
         case ParamType::TShaderProgramIDConstPointer:
@@ -1180,6 +1236,8 @@ const char *ParamTypeToString(ParamType paramType)
             return "const GLuint *";
         case ParamType::TTextureIDPointer:
             return "GLuint *";
+        case ParamType::TTextureImageParameter:
+            return "GLenum";
         case ParamType::TTextureTarget:
             return "GLenum";
         case ParamType::TTextureType:
@@ -1193,6 +1251,8 @@ const char *ParamTypeToString(ParamType paramType)
         case ParamType::TTransformFeedbackIDPointer:
             return "GLuint *";
         case ParamType::TUniformBlockIndex:
+            return "GLenum";
+        case ParamType::TUniformBlockParameter:
             return "GLenum";
         case ParamType::TUniformLocation:
             return "GLenum";

@@ -2398,9 +2398,9 @@ void GL_APIENTRY glGetClipPlanex(GLenum plane, GLfixed *equation)
     return GL_GetClipPlanex(plane, equation);
 }
 
-void GL_APIENTRY glGetFixedv(GLenum pname, GLfixed *params)
+void GL_APIENTRY glGetFixedv(GLenum pname, GLfixed *data)
 {
-    return GL_GetFixedv(pname, params);
+    return GL_GetFixedv(pname, data);
 }
 
 void GL_APIENTRY glGetLightfv(GLenum light, GLenum pname, GLfloat *params)
@@ -2994,8 +2994,6 @@ void GL_APIENTRY glLogicOpANGLE(GLenum opcode)
     return GL_LogicOpANGLE(opcode);
 }
 
-// GL_ANGLE_lossy_etc_decode
-
 // GL_ANGLE_memory_object_flags
 void GL_APIENTRY glTexStorageMemFlags2DANGLE(GLenum target,
                                              GLsizei levels,
@@ -3139,11 +3137,6 @@ void GL_APIENTRY glProvokingVertexANGLE(GLenum provokeMode)
 void GL_APIENTRY glRequestExtensionANGLE(const GLchar *name)
 {
     return GL_RequestExtensionANGLE(name);
-}
-
-void GL_APIENTRY glDisableExtensionANGLE(const GLchar *name)
-{
-    return GL_DisableExtensionANGLE(name);
 }
 
 // GL_ANGLE_rgbx_internal_format
@@ -3378,67 +3371,6 @@ void GL_APIENTRY glTexSubImage3DRobustANGLE(GLenum target,
                                        depth, format, type, bufSize, pixels);
 }
 
-void GL_APIENTRY glCompressedTexImage2DRobustANGLE(GLenum target,
-                                                   GLint level,
-                                                   GLenum internalformat,
-                                                   GLsizei width,
-                                                   GLsizei height,
-                                                   GLint border,
-                                                   GLsizei imageSize,
-                                                   GLsizei bufSize,
-                                                   const void *data)
-{
-    return GL_CompressedTexImage2DRobustANGLE(target, level, internalformat, width, height, border,
-                                              imageSize, bufSize, data);
-}
-
-void GL_APIENTRY glCompressedTexSubImage2DRobustANGLE(GLenum target,
-                                                      GLint level,
-                                                      GLsizei xoffset,
-                                                      GLsizei yoffset,
-                                                      GLsizei width,
-                                                      GLsizei height,
-                                                      GLenum format,
-                                                      GLsizei imageSize,
-                                                      GLsizei bufSize,
-                                                      const void *data)
-{
-    return GL_CompressedTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, width, height,
-                                                 format, imageSize, bufSize, data);
-}
-
-void GL_APIENTRY glCompressedTexImage3DRobustANGLE(GLenum target,
-                                                   GLint level,
-                                                   GLenum internalformat,
-                                                   GLsizei width,
-                                                   GLsizei height,
-                                                   GLsizei depth,
-                                                   GLint border,
-                                                   GLsizei imageSize,
-                                                   GLsizei bufSize,
-                                                   const void *data)
-{
-    return GL_CompressedTexImage3DRobustANGLE(target, level, internalformat, width, height, depth,
-                                              border, imageSize, bufSize, data);
-}
-
-void GL_APIENTRY glCompressedTexSubImage3DRobustANGLE(GLenum target,
-                                                      GLint level,
-                                                      GLint xoffset,
-                                                      GLint yoffset,
-                                                      GLint zoffset,
-                                                      GLsizei width,
-                                                      GLsizei height,
-                                                      GLsizei depth,
-                                                      GLenum format,
-                                                      GLsizei imageSize,
-                                                      GLsizei bufSize,
-                                                      const void *data)
-{
-    return GL_CompressedTexSubImage3DRobustANGLE(target, level, xoffset, yoffset, zoffset, width,
-                                                 height, depth, format, imageSize, bufSize, data);
-}
-
 void GL_APIENTRY glGetQueryivRobustANGLE(GLenum target,
                                          GLenum pname,
                                          GLsizei paramCount,
@@ -3660,6 +3592,16 @@ void GL_APIENTRY glGetFramebufferPixelLocalStorageParameterivRobustANGLE(GLint p
                                                                     length, params);
 }
 
+void GL_APIENTRY glGetFramebufferPixelLocalStorageParameteruivRobustANGLE(GLint plane,
+                                                                          GLenum pname,
+                                                                          GLsizei paramCount,
+                                                                          GLsizei *length,
+                                                                          GLuint *params)
+{
+    return GL_GetFramebufferPixelLocalStorageParameteruivRobustANGLE(plane, pname, paramCount,
+                                                                     length, params);
+}
+
 // GL_ANGLE_robust_fragment_shader_output
 
 // GL_ANGLE_robust_resource_initialization
@@ -3675,17 +3617,20 @@ void GL_APIENTRY glImportSemaphoreZirconHandleANGLE(GLuint semaphore,
 // GL_ANGLE_shader_binary
 
 // GL_ANGLE_shader_pixel_local_storage
-void GL_APIENTRY glFramebufferMemorylessPixelLocalStorageANGLE(GLint plane, GLenum internalformat)
+void GL_APIENTRY glFramebufferMemorylessPixelLocalStorageANGLE(GLint plane,
+                                                               GLenum internalformat,
+                                                               GLbitfield usage)
 {
-    return GL_FramebufferMemorylessPixelLocalStorageANGLE(plane, internalformat);
+    return GL_FramebufferMemorylessPixelLocalStorageANGLE(plane, internalformat, usage);
 }
 
 void GL_APIENTRY glFramebufferTexturePixelLocalStorageANGLE(GLint plane,
                                                             GLuint backingtexture,
                                                             GLint level,
-                                                            GLint layer)
+                                                            GLint layer,
+                                                            GLbitfield usage)
 {
-    return GL_FramebufferTexturePixelLocalStorageANGLE(plane, backingtexture, level, layer);
+    return GL_FramebufferTexturePixelLocalStorageANGLE(plane, backingtexture, level, layer, usage);
 }
 
 void GL_APIENTRY glFramebufferPixelLocalClearValuefvANGLE(GLint plane, const GLfloat *value)
@@ -3711,6 +3656,11 @@ void GL_APIENTRY glBeginPixelLocalStorageANGLE(GLsizei n, const GLenum *loadops)
 void GL_APIENTRY glEndPixelLocalStorageANGLE(GLsizei n, const GLenum *storeops)
 {
     return GL_EndPixelLocalStorageANGLE(n, storeops);
+}
+
+void GL_APIENTRY glEndPixelLocalStorageImplicitANGLE()
+{
+    return GL_EndPixelLocalStorageImplicitANGLE();
 }
 
 void GL_APIENTRY glPixelLocalStorageBarrierANGLE()
@@ -3742,31 +3692,18 @@ void GL_APIENTRY glGetFramebufferPixelLocalStorageParameterivANGLE(GLint plane,
     return GL_GetFramebufferPixelLocalStorageParameterivANGLE(plane, pname, params);
 }
 
+void GL_APIENTRY glGetFramebufferPixelLocalStorageParameteruivANGLE(GLint plane,
+                                                                    GLenum pname,
+                                                                    GLuint *params)
+{
+    return GL_GetFramebufferPixelLocalStorageParameteruivANGLE(plane, pname, params);
+}
 
 // GL_ANGLE_stencil_texturing
 
 // GL_ANGLE_texture_compression_dxt3
 
 // GL_ANGLE_texture_compression_dxt5
-
-// GL_ANGLE_texture_external_update
-void GL_APIENTRY glTexImage2DExternalANGLE(GLenum target,
-                                           GLint level,
-                                           GLint internalformat,
-                                           GLsizei width,
-                                           GLsizei height,
-                                           GLint border,
-                                           GLenum format,
-                                           GLenum type)
-{
-    return GL_TexImage2DExternalANGLE(target, level, internalformat, width, height, border, format,
-                                      type);
-}
-
-void GL_APIENTRY glInvalidateTextureANGLE(GLenum target)
-{
-    return GL_InvalidateTextureANGLE(target);
-}
 
 // GL_ANGLE_texture_multisample
 void GL_APIENTRY glTexStorage2DMultisampleANGLE(GLenum target,
@@ -3799,6 +3736,12 @@ void GL_APIENTRY glGetTranslatedShaderSourceANGLE(GLuint shader,
                                                   GLchar *source)
 {
     return GL_GetTranslatedShaderSourceANGLE(shader, bufSize, length, source);
+}
+
+// GL_ANGLE_trim_memory
+void GL_APIENTRY glTrimMemoryANGLE(GLenum trimLevel)
+{
+    return GL_TrimMemoryANGLE(trimLevel);
 }
 
 // GL_ANGLE_vulkan_image
@@ -3875,12 +3818,6 @@ void GL_APIENTRY glCopySubTextureCHROMIUM(GLuint sourceId,
                                      unpackPremultiplyAlpha, unpackUnmultiplyAlpha);
 }
 
-// GL_CHROMIUM_framebuffer_mixed_samples
-void GL_APIENTRY glCoverageModulationCHROMIUM(GLenum components)
-{
-    return GL_CoverageModulationCHROMIUM(components);
-}
-
 // GL_CHROMIUM_lose_context
 void GL_APIENTRY glLoseContextCHROMIUM(GLenum current, GLenum other)
 {
@@ -3896,7 +3833,6 @@ void GL_APIENTRY glEGLImageTargetTexStorageEXT(GLenum target,
 {
     return GL_EGLImageTargetTexStorageEXT(target, image, attrib_list);
 }
-
 
 // GL_EXT_EGL_image_storage_compression
 
@@ -4247,7 +4183,6 @@ void GL_APIENTRY glBufferStorageExternalEXT(GLenum target,
 {
     return GL_BufferStorageExternalEXT(target, offset, size, clientBuffer, flags);
 }
-
 
 // GL_EXT_float_blend
 
@@ -5006,6 +4941,8 @@ void GL_APIENTRY glTexBufferRangeEXT(GLenum target,
 
 // GL_EXT_texture_format_sRGB_override
 
+// GL_EXT_texture_lod_bias
+
 // GL_EXT_texture_mirror_clamp_to_edge
 
 // GL_EXT_texture_norm16
@@ -5682,6 +5619,8 @@ void GL_APIENTRY glMinSampleShadingOES(GLfloat value)
 
 // GL_OES_standard_derivatives
 
+// GL_OES_stencil8
+
 // GL_OES_surfaceless_context
 
 // GL_OES_tessellation_shader
@@ -6005,6 +5944,8 @@ void GL_APIENTRY glTextureFoveationParametersQCOM(GLuint texture,
     return GL_TextureFoveationParametersQCOM(texture, layer, focalPoint, focalX, focalY, gainX,
                                              gainY, foveaArea);
 }
+
+// GL_QCOM_texture_lod_bias
 
 // GL_QCOM_tiled_rendering
 void GL_APIENTRY glEndTilingQCOM(GLbitfield preserveMask)

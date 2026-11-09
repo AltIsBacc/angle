@@ -26,6 +26,9 @@ from difflib import unified_diff
 from gen_restricted_traces import read_json as read_json, write_json as write_json
 from pathlib import Path
 
+from contextlib import contextmanager
+from check_attribute_interleaving import analyze_trace_for_interleaved_attributes, apply_change_list_to_trace_files
+
 SCRIPT_DIR = str(pathlib.Path(__file__).resolve().parent)
 PY_UTILS = str(pathlib.Path(SCRIPT_DIR) / '..' / 'py_utils')
 if PY_UTILS not in sys.path:
@@ -206,15 +209,30 @@ def upgrade_single_trace(args, trace_binary, trace, out_path, no_overwrite, c_so
     metadata = json_data['TraceMetadata']
     logging.debug('Read metadata: %s' % str(metadata))
 
-    max_steps = min(args.limit, num_frames) if args.limit else num_frames
+    # First (1-based) frame of the original trace to include in the new trace.
+    start_frame = args.start
+    if start_frame < 1 or start_frame > num_frames:
+        logging.error('Start frame %d is out of range for "%s" (1-%d)' %
+                      (start_frame, trace, num_frames))
+        return False
 
-    # We start tracing from frame 2. --retrace-mode issues a Swap() after Setup() so we can
-    # accurately re-trace the MEC.
+    # Last frame of the original trace to include in the new trace.
+    remaining_frames = num_frames - start_frame + 1
+    end_frame = start_frame - 1 + (
+        min(args.limit, remaining_frames) if args.limit else remaining_frames)
+
+    # Replay the original trace up to and including the last frame we want to capture.
+    max_steps = end_frame
+
+    # --retrace-mode issues a Swap() after Setup(), so capture frame N corresponds to frame N-1 of
+    # the original trace. With the default start frame of 1, we start tracing from frame 2 so we
+    # can accurately re-trace the MEC. With a later start frame, the MEC captures the state at the
+    # end of the frame preceding start_frame.
     additional_env = {
         'ANGLE_CAPTURE_LABEL': trace,
         'ANGLE_CAPTURE_OUT_DIR': trace_path,
-        'ANGLE_CAPTURE_FRAME_START': '2',
-        'ANGLE_CAPTURE_FRAME_END': str(max_steps + 1),
+        'ANGLE_CAPTURE_FRAME_START': str(start_frame + 1),
+        'ANGLE_CAPTURE_FRAME_END': str(end_frame + 1),
     }
     if args.validation:
         additional_env['ANGLE_CAPTURE_VALIDATION'] = '1'
@@ -228,7 +246,7 @@ def upgrade_single_trace(args, trace_binary, trace, out_path, no_overwrite, c_so
     if c_sources:
         additional_env['ANGLE_CAPTURE_SOURCE_EXT'] = 'c'
 
-    additional_args = ['--retrace-mode']
+    additional_args = ['--retrace-mode', '--include-inactive-resources']
 
     try:
         if not os.path.isdir(trace_path):
@@ -255,6 +273,66 @@ def upgrade_single_trace(args, trace_binary, trace, out_path, no_overwrite, c_so
     return True
 
 
+@contextmanager
+def preprocessed_trace_for_upgrade(args, trace):
+    """This context analyzes the trace code for potential interleaved attributes.
+
+    If such cases are found in the trace code and the feature flag `-m` (`--merge-attributes`) is enabled,
+    the existing trace code is temporarily updated and re-compiled to enable the retracing script to
+    incorporate the interleaved property of the client data attributes into the upgraded trace.
+    """
+    trace_dir = os.path.join(SCRIPT_DIR, trace)
+    backup_dir = os.path.join(SCRIPT_DIR, '_tmp_attrib_check_backup')
+
+    output_stats, change_list = analyze_trace_for_interleaved_attributes(trace_dir)
+
+    trace_attributes_already_merged = output_stats['ExistingNonZeroOffsetForClientArray'] != 0
+    interleaved_attribute_detected = output_stats['FullyMergedGroupCount'] != 0 or output_stats[
+        'PartiallyMergedGroupCount'] != 0
+    code_changes_exist = len(change_list) > 0
+    if interleaved_attribute_detected and trace_attributes_already_merged:
+        print('Trace code found to include both merged and unmerged interleaved attributes.')
+
+    should_merge_attributes = args.merge_attributes and interleaved_attribute_detected and code_changes_exist
+
+    try:
+        if should_merge_attributes:
+            # If there is interleaving, make a backup of the trace in backup_dir, and change the trace.
+            ensure_rmdir(backup_dir)
+            shutil.copytree(trace_dir, backup_dir)
+
+            # Apply the updates
+            chmod_directory(trace_dir, stat.S_IWRITE | stat.S_IREAD)
+            apply_change_list_to_trace_files(trace_dir, change_list)
+
+            # Recompile
+            run_autoninja(args)
+
+        elif interleaved_attribute_detected:
+            print(
+                'Potential interleaved attributes detected (Total group count: {}, Groups with fully merged attributes: {}, Groups with partially merged attributes: {})'
+                .format(output_stats['TotalGroupCount'], output_stats['FullyMergedGroupCount'],
+                        output_stats['PartiallyMergedGroupCount']))
+            print(
+                'To upgrade the trace with the detected interleaved attributes merged, please use the flag `-m` or `--merge-attributes`.'
+            )
+
+        yield
+
+    finally:
+        if should_merge_attributes:
+            # Restore the original trace code from the backup directory.
+            shutil.rmtree(trace_dir)
+            shutil.copytree(backup_dir, trace_dir)
+            ensure_rmdir(backup_dir)
+
+            # Clean up object files to avoid running a stale trace later.
+            shutil.rmtree(
+                os.path.join(
+                    args.gn_path,
+                    'obj/src/tests/restricted_traces/angle_restricted_traces_{}'.format(trace)))
+
+
 def upgrade_traces(args, traces):
     run_autoninja(args)
     trace_binary = os.path.join(args.gn_path, args.test_suite)
@@ -262,9 +340,10 @@ def upgrade_traces(args, traces):
     failures = []
 
     for trace in angle_test_util.FilterTests(traces, args.traces):
-        if not upgrade_single_trace(args, trace_binary, trace, args.out_path, args.no_overwrite,
-                                    args.c_sources):
-            failures += [trace]
+        with preprocessed_trace_for_upgrade(args, trace):
+            if not upgrade_single_trace(args, trace_binary, trace, args.out_path,
+                                        args.no_overwrite, args.c_sources):
+                failures += [trace]
 
     if failures:
         print('The following traces failed to upgrade:\n')
@@ -381,7 +460,32 @@ def add_upgrade_args(parser):
         help='Limits the number of captured frames to produce a shorter trace than the original.')
 
 
+def get_min_reqs_registration_error(trace, traces):
+    # get_min_reqs will run only if the target trace listed in restricted_traces.json and added
+    # to DEPS so output a message if either step is needed
+    if trace not in traces:
+        return 'Trace "%s" is not listed in %s.' % (trace, DEFAULT_TEST_JSON)
+
+    deps_path = os.path.join(SCRIPT_DIR, '..', '..', '..', 'DEPS')
+    with open(deps_path) as f:
+        deps_contents = f.read()
+    if "'checkout_angle_restricted_trace_%s'" % trace not in deps_contents:
+        return 'Trace "%s" is listed in %s but missing from DEPS.' % (trace, DEFAULT_TEST_JSON)
+    return None
+
+
 def get_min_reqs(args, traces):
+    registration_error = get_min_reqs_registration_error(args.traces, traces)
+    if registration_error:
+        logging.error(
+            '%s\nBefore running get_min_reqs, register the trace by running these commands '
+            'in %s:\n'
+            '    jq ".traces = (.traces + [\\"%s <version>\\"] | unique)" %s | sponge %s\n'
+            '    vpython3 gen_restricted_traces.py' %
+            (registration_error, os.path.relpath(SCRIPT_DIR), args.traces, DEFAULT_TEST_JSON,
+             DEFAULT_TEST_JSON))
+        return EXIT_FAILURE
+
     run_autoninja(args)
 
     env = {}
@@ -391,8 +495,10 @@ def get_min_reqs(args, traces):
     ]
     # List of extensions which de facto imply others. The implied extensions are removed
     # from the RequiredExtensions list for wider platform support: http://anglebug.com/380026310
-    implied_extension_filter = [("GL_OES_compressed_ETC1_RGB8_texture",
-                                 "GL_EXT_compressed_ETC1_RGB8_sub_texture")]
+    implied_extension_filter = [
+        ("GL_OES_compressed_ETC1_RGB8_texture", "GL_EXT_compressed_ETC1_RGB8_sub_texture"),
+        ("GL_EXT_shader_framebuffer_fetch", "GL_ARM_shader_framebuffer_fetch")
+    ]
     default_args = ["--no-warmup"]
 
     skipped_traces = []
@@ -530,6 +636,11 @@ def get_min_reqs(args, traces):
                 set_gles_version(json_data, (3, 1))
                 recurse_reqs.remove("GL_EXT_separate_shader_objects")
 
+            # For replay portability, if GL_EXT_buffer_storage is required
+            #  bump version to 3.1 as per the requirement in the extension spec
+            if "GL_EXT_buffer_storage" in recurse_reqs and min_version < (3, 1):
+                set_gles_version(json_data, (3, 1))
+
             json_data['RequiredExtensions'] = recurse_reqs
             save_trace_json(trace, json_data)
 
@@ -606,7 +717,21 @@ def main():
         action='store_true')
     upgrade_parser.add_argument(
         '-c', '--c-sources', help='Output to c sources instead of cpp.', action='store_true')
+    upgrade_parser.add_argument(
+        '-m',
+        '--merge-attributes',
+        help='Merge detected interleaved attributes (if any).',
+        action='store_true')
     add_upgrade_args(upgrade_parser)
+    upgrade_parser.add_argument(
+        '-s',
+        '--start',
+        '--start-frame',
+        type=int,
+        default=1,
+        help='First frame (1-based) of the original trace to include in the new trace. Frames '
+        'before it are replayed and folded into Setup via mid-execution capture. Combine with '
+        '--limit to set the number of frames captured from this point. Defaults to 1.')
     upgrade_parser.add_argument(
         '--show-test-stdout', help='Log test output.', action='store_true', default=False)
 

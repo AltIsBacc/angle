@@ -7,14 +7,53 @@
 #include "test_utils/ANGLETest.h"
 
 #include "test_utils/gl_raii.h"
+#include "util/EGLWindow.h"
 #include "util/random_utils.h"
 #include "util/shader_utils.h"
 #include "util/test_utils.h"
+
+// Check AHB test support availability
+#if defined(ANGLE_PLATFORM_ANDROID) && __ANDROID_API__ >= 26
+#    define CAPTURE_TESTS_AHB_SUPPORT
+#    include <android/hardware_buffer.h>
+#    include "common/android_util.h"
+#endif
 
 using namespace angle;
 
 namespace
 {
+#if defined(CAPTURE_TESTS_AHB_SUPPORT)
+// Helper to allocate RGBA8 AHB and upload image data
+AHardwareBuffer *AllocateRGBA8AHB(size_t width, size_t height, const GLubyte *rgbaData)
+{
+    AHardwareBuffer_Desc desc = {};
+    desc.width                = width;
+    desc.height               = height;
+    desc.layers               = 1;
+    desc.format               = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+    desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY;
+
+    AHardwareBuffer *ahb = nullptr;
+    EXPECT_EQ(0, AHardwareBuffer_allocate(&desc, &ahb));
+
+    void *mapped = nullptr;
+    EXPECT_EQ(
+        0, AHardwareBuffer_lock(ahb, AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY, -1, nullptr, &mapped));
+
+    AHardwareBuffer_describe(ahb, &desc);
+    const size_t rowBytes = width * 4;
+    for (size_t row = 0; row < height; row++)
+    {
+        memcpy(static_cast<uint8_t *>(mapped) + row * desc.stride * 4, rgbaData + row * rowBytes,
+               rowBytes);
+    }
+
+    EXPECT_EQ(0, AHardwareBuffer_unlock(ahb, nullptr));
+    return ahb;
+}
+#endif
+
 class CapturedTest : public ANGLETest<>
 {
   protected:
@@ -443,6 +482,57 @@ void MultiFrame::frame5()
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, indices);
     EXPECT_PIXEL_EQ(108, 108, 0, 0, 255, 255);
 
+    // The pointer assignments for the position and texture attributes are swapped.
+    glClear(GL_COLOR_BUFFER_BIT);
+    glVertexAttribPointer(texCoordLoc, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), vertices + 3);
+    glVertexAttribPointer(positionLoc, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), vertices);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, indices);
+    EXPECT_PIXEL_EQ(108, 108, 0, 0, 255, 255);
+
+    // Redundant pointer assignments are added for the vertex attributes, which will be overridden
+    // with their final values before the next draw.
+    GLfloat unusedData[] = {
+        10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f, 10.0f,
+    };
+    glDisableVertexAttribArray(positionLoc);
+    glDisableVertexAttribArray(texCoordLoc);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glVertexAttribPointer(positionLoc, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), unusedData + 6);
+    glEnableVertexAttribArray(positionLoc);
+    glVertexAttribPointer(positionLoc, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), vertices + 2);
+    glVertexAttribPointer(positionLoc, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), vertices);
+
+    glVertexAttribPointer(texCoordLoc, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), vertices + 5);
+    glVertexAttribPointer(texCoordLoc, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), unusedData + 7);
+    glVertexAttribPointer(texCoordLoc, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), vertices + 3);
+    glEnableVertexAttribArray(texCoordLoc);
+
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, indices);
+    EXPECT_PIXEL_EQ(108, 108, 0, 0, 255, 255);
+
+    // The stride for the position attribute is increased so that the data for the texture attribute
+    // falls entirely within its range.
+    GLfloat reorderedData[] = {
+        -0.25f, 0.75f,  0.0f,                                      // Position 0
+        0.0f,   0.0f,                                              // TexCoord 0
+        0.0f,   1.0f,                                              // TexCoord 1
+        1.0f,   1.0f,                                              // TexCoord 2
+        1.0f,   0.0f,                                              // TexCoord 3
+        0.0f,                                                      // Padding
+        -0.25f, -0.25f, 0.0f,                                      // Position 1
+        0.0f,   0.0f,   0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,  // Padding
+        0.75f,  -0.25f, 0.0f,                                      // Position 2
+        0.0f,   0.0f,   0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,  // Padding
+        0.75f,  0.75f,  0.0f,                                      // Position 3
+    };
+    glClear(GL_COLOR_BUFFER_BIT);
+    glVertexAttribPointer(positionLoc, 3, GL_FLOAT, GL_FALSE, 12 * sizeof(GLfloat), reorderedData);
+    glVertexAttribPointer(texCoordLoc, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat),
+                          reorderedData + 3);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, indices);
+    EXPECT_PIXEL_EQ(108, 108, 0, 0, 255, 255);
+
     // Add an invalid call so it shows up in capture as a comment.
     // This is unrelated to the rest of the frame, but needs a home.
     GLuint nonExistentBinding = 666;
@@ -555,6 +645,37 @@ void main()
 
     ASSERT_GL_NO_ERROR();
 
+    // Create a yellow texture and an FBO color texture on GL_TEXTURE2 before capture begins,
+    // leaving yellowTexture bound to GL_TEXTURE2 and fboPreCapture unbound (attached to an FBO).
+    // Updating both via FBO during capture without touching GL_TEXTURE2 causes
+    // ResetReplayContextShared() to clobber GL_TEXTURE2 with fboPreCapture, testing that
+    // ResetReplay() tracks and restores GL_TEXTURE2 and the active texture unit.
+    GLTexture yellowTexture;
+    GLTexture fboPreCapture;
+    const std::vector<GLColor> kYellowData(kSize * kSize, GLColor::yellow);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, yellowTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 kYellowData.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    glBindTexture(GL_TEXTURE_2D, fboPreCapture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    GLFramebuffer fboYellow;
+    glBindFramebuffer(GL_FRAMEBUFFER, fboYellow);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, yellowTexture, 0);
+
+    GLFramebuffer fboPre;
+    glBindFramebuffer(GL_FRAMEBUFFER, fboPre);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fboPreCapture, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    glBindTexture(GL_TEXTURE_2D, yellowTexture);
+
     // First run the program with red and green active
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, redTexture);
@@ -584,11 +705,38 @@ void main()
     EXPECT_PIXEL_EQ(0, 0, 0, 255, 255, 255);
 
     // Modify the green texture to ensure we bind the right index in Reset
+    // Also, modify one of its parameters to ensure it is restored in the end.
     const std::vector<GLColor> kWhiteData(kSize * kSize, GLColor::white);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, greenTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                  kWhiteData.data());
+
+    // Modify parameters of the blue texture to test restoration if we have a parameter update
+    // without changing the texture content.
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, blueTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Clear pre-capture FBOs to dirty yellowTexture and fboPreCapture without binding GL_TEXTURE2
+    glBindFramebuffer(GL_FRAMEBUFFER, fboYellow);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, fboPre);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Bind non-default framebuffer during capture restore default to test framebuffer binding
+    // tracking in the tracer
+    GLTexture fboColor;
+    glBindTexture(GL_TEXTURE_2D, fboColor);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fboColor, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    ASSERT_GL_NO_ERROR();
 
     // Empty frames to reach capture end.
     for (int i = 0; i < 10; i++)
@@ -597,7 +745,420 @@ void main()
     }
 }
 
+// Test external sync detection and drop. AR camera titles import GL/EGL sync objects from
+// the camera side that never pass through the captured context's GL/EGL entry points.
+// When the trace later waits/destroys one of these sync objects, replay would generate
+// "Sync object does not exist" errors. This verifies the detection works and that the
+// trace warning comment is properly emitted in its place. We can test this because EGL sync objects
+// are validated at the display level but capture's "emitted sync" checking is done per share group.
+// So we create a second, non-shared context to create the sync after the main context's MEC runs.
+// The main context then consumes it, the call is valid, but its sync ID was never tracked by this
+// capture so it gets dropped.
+TEST_P(CapturedTest, ExternalEGLSync)
+{
+    EGLWindow *window = getEGLWindow();
+    EGLDisplay dpy    = window->getDisplay();
+    EGLConfig config  = window->getConfig();
+
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(dpy, "EGL_KHR_fence_sync"));
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(dpy, "EGL_KHR_wait_sync"));
+
+    static constexpr char kVS[] = R"(attribute vec4 a_position;
+varying vec2 v_texCoord;
+void main()
+{
+    gl_Position = a_position;
+    v_texCoord = a_position.xy * 0.5 + 0.5;
+})";
+    static constexpr char kFS[] = R"(precision mediump float;
+varying vec2 v_texCoord;
+uniform sampler2D s_texture;
+void main()
+{
+    gl_FragColor = texture2D(s_texture, v_texCoord);
+})";
+
+    // Create program and texture before capture start to be captured by MEC as starting
+    // resources
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program, "s_texture"), 0);
+
+    constexpr GLsizei kSize = 2;
+    const std::vector<GLColor> kBlueData(kSize * kSize, GLColor::blue);
+    GLTexture texture;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 kBlueData.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    ASSERT_GL_NO_ERROR();
+
+    // Create a second non-shared context (different share group) with its own pbuffer surface
+    // before capture start so it setup is not in the main context's captured frames
+    EGLint pbufferAttribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+    EGLSurface auxSurface   = eglCreatePbufferSurface(dpy, config, pbufferAttribs);
+    ASSERT_EGL_SUCCESS();
+    EGLContext auxContext = window->createContext(EGL_NO_CONTEXT, nullptr);
+    ASSERT_EGL_SUCCESS();
+
+    // Frame 1, before capture starts
+    drawQuad(program, "a_position", 0.5f);
+    swapBuffers();
+
+    // Frame 2, capture starts. Create EGL fence sync on the other (non-shared) context.
+    // The sync is created after main context's MEC and on a different share group, so
+    // the main capture never sees its creation
+    EGLSurface mainSurface = window->getSurface();
+    EGLContext mainContext = window->getContext();
+    EXPECT_EGL_TRUE(eglMakeCurrent(dpy, auxSurface, auxSurface, auxContext));
+    EGLSyncKHR externalSync = eglCreateSyncKHR(dpy, EGL_SYNC_FENCE_KHR, nullptr);
+    glFlush();
+    EXPECT_EGL_TRUE(eglMakeCurrent(dpy, mainSurface, mainSurface, mainContext));
+    ASSERT_NE(externalSync, EGL_NO_SYNC_KHR);
+
+    // Main context tries to wait on the external sync. These calls are valid but specify a sync
+    // ID this trace never created so both should be dropped with comments
+    EXPECT_EGL_TRUE(eglWaitSyncKHR(dpy, externalSync, 0));
+    drawQuad(program, "a_position", 0.5f);
+    swapBuffers();
+
+    EXPECT_EGL_TRUE(eglDestroySyncKHR(dpy, externalSync));
+    drawQuad(program, "a_position", 0.5f);
+    swapBuffers();
+
+    // Empty frames to reach capture end
+    for (int i = 0; i < 10; i++)
+    {
+        swapBuffers();
+    }
+
+    eglDestroySurface(dpy, auxSurface);
+    eglDestroyContext(dpy, auxContext);
+}
+
+// Regression test for capturing traces with zero-sized binary data (empty angledata file)
+TEST_P(CapturedTest, NoBinaryData)
+{
+    // Swap before the first captured frame so setup gets its own frame.
+    swapBuffers();
+
+    glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glViewport(0, 0, 16, 16);
+    swapBuffers();
+
+    glClearColor(0.4f, 0.5f, 0.6f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(0, 0, 8, 8);
+    glDisable(GL_SCISSOR_TEST);
+
+    // Empty frames to reach capture end.
+    for (int i = 0; i < 10; i++)
+    {
+        swapBuffers();
+    }
+    ASSERT_GL_NO_ERROR();
+}
+
+// Regression test for MEC surface-reference leak causing AR camera-feed trace failures.
+// Camera AR apps keep a side context in the render context's share group. When capture starts,
+// MEC loops through all side contexts making each current on the window surface to serialize
+// it. If we don't then release these afterwards there remains a dangling reference and the app
+// can no longer make it current on any thread, causing EGL_BAD_ACCESS/"Surface can only be
+// current on one thread" errors and invalid 'glBindFramebuffer(0xFFFFFFFF)' calls in the trace.
+// Test capture and replay of glClientWaitSync.
+TEST_P(CapturedTest, ClientWaitSync)
+{
+    // We need GLES 3.0 for fence sync
+    ANGLE_SKIP_TEST_IF(getClientMajorVersion() < 3);
+
+    // Swap before the first captured frame so setup gets its own frame.
+    swapBuffers();
+
+    GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    ASSERT_NE(sync, nullptr);
+
+    // Force a flush and finish to guarantee the sync is signaled
+    glFlush();
+    glFinish();
+
+    GLenum status = glClientWaitSync(sync, 0, 0);
+    EXPECT_EQ(status, static_cast<GLenum>(GL_ALREADY_SIGNALED));
+
+    glDeleteSync(sync);
+
+    // Empty frames to reach capture end
+    for (int i = 0; i < 10; i++)
+    {
+        swapBuffers();
+    }
+    ASSERT_GL_NO_ERROR();
+}
+
+// Regression test for non-frame boundary swaps. Some side-contexts call SwapBuffers on
+// Pbuffer surfaces in addition to the swaps done on the main EGL_WINDOW, and these side-swaps
+// must not be treated as capture frame boundaries. This test interleaves 1x1-pbuffer swaps
+// with window swaps
+TEST_P(CapturedTest, NonFrameBoundarySwaps)
+{
+    EGLWindow *window      = getEGLWindow();
+    EGLDisplay dpy         = window->getDisplay();
+    EGLConfig config       = window->getConfig();
+    EGLSurface mainSurface = window->getSurface();
+    EGLContext mainContext = window->getContext();
+
+    // Small aux pbuffer acting like a side-context's surface
+    EGLint pbufferAttribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+    EGLSurface sideSurface  = eglCreatePbufferSurface(dpy, config, pbufferAttribs);
+    ASSERT_EGL_SUCCESS();
+
+    // Frame 1, before capture starts
+    swapBuffers();
+
+    // Captured starts. Before each real window swap, swap the 1x1 pbuffer on the same context
+    for (int i = 0; i < 10; i++)
+    {
+        ASSERT_EGL_TRUE(eglMakeCurrent(dpy, sideSurface, sideSurface, mainContext));
+        glClear(GL_COLOR_BUFFER_BIT);
+        EXPECT_EGL_TRUE(eglSwapBuffers(dpy, sideSurface));
+
+        ASSERT_EGL_TRUE(eglMakeCurrent(dpy, mainSurface, mainSurface, mainContext));
+        glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        swapBuffers();
+    }
+
+    ASSERT_EGL_TRUE(eglMakeCurrent(dpy, mainSurface, mainSurface, mainContext));
+    eglDestroySurface(dpy, sideSurface);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that MEC releases the window surface after making share-group side contexts current to
+// capture their state, so the app can still make the surface current afterwards
+TEST_P(CapturedTest, MECSurfaceRelease)
+{
+    EGLWindow *window      = getEGLWindow();
+    EGLDisplay dpy         = window->getDisplay();
+    EGLConfig config       = window->getConfig();
+    EGLSurface surface     = window->getSurface();
+    EGLContext mainContext = window->getContext();
+
+    // Create a side context in the main context's share group representing the AR app's camera
+    // context
+    EGLContext sideContext = window->createContext(mainContext, nullptr);
+    ASSERT_EGL_SUCCESS();
+    ASSERT_NE(sideContext, EGL_NO_CONTEXT);
+
+    EGLint pbufferAttribs[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+    EGLSurface sidePbuffer  = eglCreatePbufferSurface(dpy, config, pbufferAttribs);
+    ASSERT_EGL_SUCCESS();
+
+    ASSERT_EGL_TRUE(eglMakeCurrent(dpy, sidePbuffer, sidePbuffer, sideContext));
+    glClear(GL_COLOR_BUFFER_BIT);
+    ASSERT_EGL_TRUE(eglMakeCurrent(dpy, surface, surface, mainContext));
+
+    glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    // Swap and start capture while the side context is live in our share group. MEC will make
+    // it current for capturing its state
+    swapBuffers();
+
+    // Detach and reacquire the window surface. If MEC left a side context reference to the window
+    // surface it will fail with EGL_BAD_ACCESS
+    ASSERT_EGL_TRUE(eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT));
+    EGLBoolean reacquired = eglMakeCurrent(dpy, surface, surface, mainContext);
+    EXPECT_EGL_TRUE(reacquired);
+
+    if (reacquired)
+    {
+        // Reach capture end
+        for (int i = 0; i < 10; i++)
+        {
+            swapBuffers();
+        }
+    }
+
+    eglDestroySurface(dpy, sidePbuffer);
+    eglDestroyContext(dpy, sideContext);
+}
+
+// Run with multisampled-render-to-texture force-enabled so that
+// GL_EXT_multisampled_render_to_texture is set for all platforms
+class CapturedTestMSRTT : public CapturedTest
+{};
+
+// Test that MEC preserves the sample count of a texture attached with
+// glFramebufferTexture2DMultisampleEXT
+TEST_P(CapturedTestMSRTT, MultisampledRenderToTextureAttachment)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_multisampled_render_to_texture"));
+
+    constexpr GLsizei kSize    = 16;
+    constexpr GLsizei kSamples = 4;
+
+    GLTexture color;
+    glBindTexture(GL_TEXTURE_2D, color);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+
+    GLRenderbuffer depthStencil;
+    glBindRenderbuffer(GL_RENDERBUFFER, depthStencil);
+    glRenderbufferStorageMultisampleEXT(GL_RENDERBUFFER, kSamples, GL_DEPTH24_STENCIL8, kSize,
+                                        kSize);
+
+    // Both attachments must be MSRTT and have the same sample count
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color,
+                                         0, kSamples);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+                              depthStencil);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    swapBuffers();
+
+    // Use FB during capture so it ends up in trace's setup
+    for (int frame = 0; frame < 10; frame++)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        swapBuffers();
+    }
+    ASSERT_GL_NO_ERROR();
+}
+
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CapturedTest);
 // Capture is only supported on the Vulkan backend
 ANGLE_INSTANTIATE_TEST(CapturedTest, ES3_VULKAN());
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CapturedTestMSRTT);
+ANGLE_INSTANTIATE_TEST(CapturedTestMSRTT,
+                       ES3_VULKAN().enable(Feature::EnableMultisampledRenderToTexture));
+
+#if defined(CAPTURE_TESTS_AHB_SUPPORT)
+// Android-only tests run in their own suite after all other suites, so that the context IDs
+// they consume do not shift the expected output of tests that run on every platform
+class CapturedTestAHB : public CapturedTest
+{};
+
+// Test capture and replay of external AHBs on Android platforms. On other platforms
+// not supporting AHBs, the test will be skipped and the outtput will not be
+// compared to the expected results
+TEST_P(CapturedTestAHB, ExternalAHB)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_EGL_image_external"));
+    ANGLE_SKIP_TEST_IF(
+        !IsEGLDisplayExtensionEnabled(getEGLWindow()->getDisplay(), "EGL_KHR_image_base"));
+    ANGLE_SKIP_TEST_IF(!IsEGLDisplayExtensionEnabled(getEGLWindow()->getDisplay(),
+                                                     "EGL_ANDROID_image_native_buffer"));
+
+    static constexpr char kVS[] = R"(attribute vec4 a_position;
+attribute vec2 a_texCoord;
+varying vec2 v_texCoord;
+void main()
+{
+    gl_Position = a_position;
+    v_texCoord = a_texCoord;
+})";
+
+    static constexpr char kFS[] = R"(#extension GL_OES_EGL_image_external : require
+precision mediump float;
+varying vec2 v_texCoord;
+uniform samplerExternalOES s_texture;
+void main()
+{
+    gl_FragColor = texture2D(s_texture, v_texCoord);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+    GLint samplerLoc = glGetUniformLocation(program, "s_texture");
+    glUniform1i(samplerLoc, 0);
+
+    constexpr size_t kSize                 = 2;
+    GLubyte redPixels[kSize * kSize * 4]   = {255, 0, 0, 255, 255, 0, 0, 255,
+                                              255, 0, 0, 255, 255, 0, 0, 255};
+    GLubyte greenPixels[kSize * kSize * 4] = {0, 255, 0, 255, 0, 255, 0, 255,
+                                              0, 255, 0, 255, 0, 255, 0, 255};
+    GLubyte bluePixels[kSize * kSize * 4]  = {0, 0, 255, 255, 0, 0, 255, 255,
+                                              0, 0, 255, 255, 0, 0, 255, 255};
+
+    // First frame before capture starts, we create an AHB filled with red and bind it
+    AHardwareBuffer *redAHB = AllocateRGBA8AHB(kSize, kSize, redPixels);
+    EGLImageKHR redImage =
+        eglCreateImageKHR(getEGLWindow()->getDisplay(), EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
+                          angle::android::AHardwareBufferToClientBuffer(redAHB), nullptr);
+    ASSERT_EGL_SUCCESS();
+
+    GLTexture externalTexture;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, externalTexture);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // External image binding
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, redImage);
+    ASSERT_GL_NO_ERROR();
+    swapBuffers();
+
+    // Capture begins on this frame. Draw using binding from before caapture start.
+    drawQuad(program, "a_position", 0.5f);
+    EXPECT_PIXEL_EQ(0, 0, 255, 0, 0, 255);
+    swapBuffers();
+
+    // Second captured frame -- create green AHB and rebind
+    AHardwareBuffer *greenAHB = AllocateRGBA8AHB(kSize, kSize, greenPixels);
+    EGLImageKHR greenImage =
+        eglCreateImageKHR(getEGLWindow()->getDisplay(), EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
+                          angle::android::AHardwareBufferToClientBuffer(greenAHB), nullptr);
+    ASSERT_EGL_SUCCESS();
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, externalTexture);
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, greenImage);
+    drawQuad(program, "a_position", 0.5f);
+    EXPECT_PIXEL_EQ(0, 0, 0, 255, 0, 255);
+    swapBuffers();
+
+    // Third captured frame -- create blue AHB and rebind
+    AHardwareBuffer *blueAHB = AllocateRGBA8AHB(kSize, kSize, bluePixels);
+    EGLImageKHR blueImage =
+        eglCreateImageKHR(getEGLWindow()->getDisplay(), EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
+                          angle::android::AHardwareBufferToClientBuffer(blueAHB), nullptr);
+    ASSERT_EGL_SUCCESS();
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, externalTexture);
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, blueImage);
+    drawQuad(program, "a_position", 0.5f);
+    EXPECT_PIXEL_EQ(0, 0, 0, 0, 255, 255);
+    swapBuffers();
+
+    // Fourth captured frame -- draw again without rebinding reusing the blue
+    // binding from the previous frame
+    drawQuad(program, "a_position", 0.5f);
+    EXPECT_PIXEL_EQ(0, 0, 0, 0, 255, 255);
+    swapBuffers();
+
+    // Fifth captured frame -- destroy the green EGLImage during capture
+    eglDestroyImageKHR(getEGLWindow()->getDisplay(), greenImage);
+    AHardwareBuffer_release(greenAHB);
+
+    // Empty frames to reach capture end.
+    for (int i = 0; i < 10; i++)
+    {
+        swapBuffers();
+    }
+
+    eglDestroyImageKHR(getEGLWindow()->getDisplay(), redImage);
+    eglDestroyImageKHR(getEGLWindow()->getDisplay(), blueImage);
+    AHardwareBuffer_release(redAHB);
+    AHardwareBuffer_release(blueAHB);
+}
+
+ANGLE_INSTANTIATE_TEST(CapturedTestAHB, ES3_VULKAN());
+#endif  // defined(CAPTURE_TESTS_AHB_SUPPORT)
 }  // anonymous namespace

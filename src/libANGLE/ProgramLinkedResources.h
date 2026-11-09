@@ -279,11 +279,11 @@ class PixelLocalStorageLinker final : angle::NonCopyable
     PixelLocalStorageLinker();
     ~PixelLocalStorageLinker();
 
-    void init(std::vector<ShPixelLocalStorageFormat> *pixelLocalStorageFormatsOut);
-    void link(const std::vector<ShPixelLocalStorageFormat> &pixelLocalStorageFormats) const;
+    void init(std::vector<ShPixelLocalStorageLayout> *pixelLocalStorageLayoutsOut);
+    void link(const std::vector<ShPixelLocalStorageLayout> &pixelLocalStorageLayouts) const;
 
   private:
-    std::vector<ShPixelLocalStorageFormat> *mPixelLocalStorageFormatsOut = nullptr;
+    std::vector<ShPixelLocalStorageLayout> *mPixelLocalStorageLayoutsOut = nullptr;
 };
 
 struct ProgramLinkedResources
@@ -298,7 +298,7 @@ struct ProgramLinkedResources
               std::vector<InterfaceBlock> *shaderStorageBlocksOut,
               std::vector<BufferVariable> *bufferVariablesOut,
               std::vector<AtomicCounterBuffer> *atomicCounterBuffersOut,
-              std::vector<ShPixelLocalStorageFormat> *pixelLocalStorageFormatsOut);
+              std::vector<ShPixelLocalStorageLayout> *pixelLocalStorageLayoutsOut);
 
     ProgramVaryingPacking varyingPacking;
     UniformBlockLinker uniformBlockLinker;
@@ -376,12 +376,16 @@ bool LinkValidateBuiltInVaryingsInvariant(const std::vector<sh::ShaderVariable> 
                                           const std::vector<sh::ShaderVariable> &fragmentVaryings,
                                           int vertexShaderVersion,
                                           InfoLog &infoLog);
-bool LinkValidateBuiltInVaryings(const std::vector<sh::ShaderVariable> &inputVaryings,
-                                 const std::vector<sh::ShaderVariable> &outputVaryings,
-                                 ShaderType inputShaderType,
+bool LinkValidateBuiltInVaryings(const std::vector<sh::ShaderVariable> &outputVaryings,
+                                 const std::vector<sh::ShaderVariable> &inputVaryings,
                                  ShaderType outputShaderType,
-                                 int inputShaderVersion,
+                                 ShaderType inputShaderType,
                                  int outputShaderVersion,
+                                 int inputShaderVersion,
+                                 const uint8_t outputClipDistanceSize,
+                                 const uint8_t outputCullDistanceSize,
+                                 const uint8_t inputClipDistanceSize,
+                                 const uint8_t inputCullDistanceSize,
                                  InfoLog &infoLog);
 LinkMismatchError LinkValidateProgramVariables(const sh::ShaderVariable &variable1,
                                                const sh::ShaderVariable &variable2,
